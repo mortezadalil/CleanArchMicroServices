@@ -90,3 +90,7 @@ input[type=number] { width: 64px; }
 .replay-step { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 8px 0; }
 @media (max-width: 900px) { .dev-grid, .two-col, .db-grid { grid-template-columns: 1fr; } .topbar { flex-wrap: wrap; gap: 8px; } }
 @media (prefers-reduced-motion: reduce) { .graph animateMotion, .graph .dot { display: none; } }
+/* reset banner under the top bar */
+.reset-banner { display: flex; justify-content: space-between; align-items: center; padding: 8px 20px; font-size: 13px; border-bottom: 1px solid var(--border); }
+.reset-banner.ok { background: color-mix(in srgb, var(--ok) 12%, var(--panel)); color: var(--ok); }
+.reset-banner.err { background: color-mix(in srgb, var(--err) 12%, var(--panel)); color: var(--err); }

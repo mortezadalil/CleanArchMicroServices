@@ -175,6 +175,10 @@ Store Mode and Developer Mode share the `orderId` / `scenarioId` context through
 
 ### Demo control plane (Development only)
 
+The header has a **⟲ Reset data** button. After a confirmation it removes all fault rules, purges the
+MiniShop queues, empties every database and restores the seed (10 units per product, `demo-customer`
+with 2,000,000). See `src/MiniShop.Web/Services/DemoResetService.cs` and `infra/seeds/README.md`.
+
 All `/demo/*` and `/diagnostics/*` endpoints exist only when `Demo:Enabled=true`
 (`appsettings.Development.json`, compose) and require the header `X-Demo-Token: minishop-dev`.
 They are never mapped in Production. Fault rules are scoped by `ScenarioId`, limited by

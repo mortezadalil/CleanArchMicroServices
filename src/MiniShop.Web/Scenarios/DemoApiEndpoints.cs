@@ -65,17 +65,10 @@ public static class DemoApiEndpoints
         // ---- resets -------------------------------------------------------------------------------
         group.MapPost("/readmodel/rebuild", async (ReadModelRebuilder rebuilder) => Results.Ok(new { replayed = await rebuilder.RebuildAsync(CancellationToken.None) }));
 
-        group.MapPost("/reset-all", async (ServiceClients clients, ReadModelDbContext db, UiNotifier notifier, MassTransit.IBus bus) =>
+        group.MapPost("/reset-all", async (DemoResetService reset) =>
         {
-            await clients.RemoveFaultsEverywhereAsync(null);
-            foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
-                await clients.ResetServiceAsync(service);
-            await db.Database.EnsureDeletedAsync();
-            await db.Database.EnsureCreatedAsync();
-            // the services re-seed and announce their catalog/wallets; ask once more in case we raced them
-            await bus.Publish(new ReadModelSnapshotRequested(ServiceNames.Web, "demo reset") { Producer = ServiceNames.Web });
-            notifier.Notify("readmodel");
-            return Results.Ok(new { reset = true });
+            var result = await reset.ResetAllAsync();
+            return result.Success ? Results.Ok(result) : Results.Conflict(result);
         });
 
         group.MapGet("/health-map", (ServiceHealthMonitor monitor) => Results.Ok(new { nodes = monitor.Nodes.Values, queues = monitor.Queues }));

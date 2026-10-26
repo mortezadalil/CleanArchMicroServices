@@ -65,9 +65,8 @@ if (app.MapDemoGroup("/demo") is { } demo)
     demo.MapPost("/reset", async (InventoryDbContext db, FaultRegistry faults, OutboxSignal signal) =>
     {
         faults.Clear();
-        await db.Database.EnsureDeletedAsync();
-        await db.Database.EnsureCreatedAsync();
-        await CatalogSeed.SeedAsync(db, CancellationToken.None);
+        await DatabaseReset.ClearAllTablesAsync(db);
+        await CatalogSeed.SeedAsync(db, CancellationToken.None);   // 3 products, 10 units each, announced via the outbox
         signal.Notify();
         return Results.Ok(new { reset = true });
     });

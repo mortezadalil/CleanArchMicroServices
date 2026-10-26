@@ -1,6 +1,9 @@
 @inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject CartService Cart
+@inject DemoResetService Reset
+@inject Microsoft.Extensions.Options.IOptions<MiniShop.Shared.Demo.DemoOptions> Demo
 
 <div class="shell">
     <header class="topbar">
@@ -11,8 +14,23 @@
             <NavLink href="/orders">My Orders</NavLink>
             <NavLink href="@DeveloperHref" class="dev">Developer Mode</NavLink>
         </nav>
+        @* Development only: the control plane is not available in Production. *@
+        @if (Demo.Value.Enabled)
+        {
+            <button class="btn small danger" disabled="@_resetting" @onclick="ResetData"
+                    title="Delete all orders, scenario runs and history; restore stock (10 each) and the demo wallet (2,000,000)">
+                @(_resetting ? "Resetting…" : "⟲ Reset data")
+            </button>
+        }
         <button class="ghost" title="toggle light/dark" @onclick="ToggleTheme">◐</button>
     </header>
+    @if (_resetMessage is not null)
+    {
+        <div class="reset-banner @(_resetOk ? "ok" : "err")">
+            <span>@_resetMessage</span>
+            <button class="ghost" @onclick="() => _resetMessage = null">✕</button>
+        </div>
+    }
     <main>@Body</main>
     <footer class="foot">Educational microservices demo · Saga · Outbox · Inbox · CQRS · RabbitMQ</footer>
 </div>
@@ -37,6 +55,37 @@
     {
         if (firstRender)
             _theme = await JS.InvokeAsync<string>("miniShop.getTheme");
+    }
+
+    private bool _resetting;
+    private bool _resetOk;
+    private string? _resetMessage;
+
+    /// <summary>Header button: after confirmation, reset every database to the seed and reload the current page.</summary>
+    private async Task ResetData()
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            "Reset ALL MiniShop data to the initial state?\n\nOrders, scenario runs, timeline and fault rules are deleted; stock goes back to 10 per product and the demo wallet to 2,000,000.");
+        if (!confirmed) return;
+
+        _resetting = true;
+        _resetMessage = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Reset.ResetAllAsync();
+            _resetOk = result.Success;
+            _resetMessage = result.Message;
+            if (result.Success)
+            {
+                Cart.Clear();
+                Nav.NavigateTo("/", replace: true);
+            }
+        }
+        finally
+        {
+            _resetting = false;
+        }
     }
 
     private async Task ToggleTheme()

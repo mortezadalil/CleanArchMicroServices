@@ -63,6 +63,12 @@ invariantها را با شواهد نشان می‌دهد (`PASSED` / `FAILED` /
 (`docker compose -f infra/compose.yaml --profile faults up`) تا کانتینر runner این کار را بکند، یا وقتی لاگ
 اجرا خواست، دستی `docker compose stop rabbitmq` و سپس `docker compose start rabbitmq` را اجرا کنید.
 
+## بازگشت به حالت اولیه
+
+دکمهٔ **⟲ Reset data** در هدر (فقط در Development) پس از تأیید، همهٔ قوانین fault را حذف می‌کند، صف‌های
+MiniShop در RabbitMQ (از جمله `*_error`) را خالی می‌کند، جدول‌های هر چهار دیتابیس را پاک می‌کند و دادهٔ
+اولیه را برمی‌گرداند: سه محصول با ۱۰ عدد موجودی و کیف پول `demo-customer` با ۲٬۰۰۰٬۰۰۰ تومان.
+
 ## تست‌ها
 
 ```bash

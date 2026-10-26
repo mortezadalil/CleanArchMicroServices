@@ -73,8 +73,7 @@ if (app.MapDemoGroup("/demo") is { } demo)
     demo.MapPost("/reset", async (OrdersDbContext db, FaultRegistry faults) =>
     {
         faults.Clear();
-        await db.Database.EnsureDeletedAsync();
-        await db.Database.EnsureCreatedAsync();
+        await DatabaseReset.ClearAllTablesAsync(db);   // no orders, no sagas, empty outbox/inbox
         return Results.Ok(new { reset = true });
     });
     // S09 without Docker: stop the bus (consumers + publishing) for a few seconds and start it again.

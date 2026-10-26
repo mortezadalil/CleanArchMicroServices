@@ -4,6 +4,8 @@
 @inject ScenarioRunner Runner
 @inject ServiceClients Clients
 @inject NavigationManager Nav
+@inject DemoResetService Reset
+@inject IJSRuntime JS
 
 <PageTitle>Developer Console · MiniShop</PageTitle>
 
@@ -157,10 +159,10 @@
 
     private async Task ResetAll()
     {
-        await Clients.RemoveFaultsEverywhereAsync(null);
-        foreach (var s in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
-            try { await Clients.ResetServiceAsync(s); } catch (Exception) { }
+        if (!await JS.InvokeAsync<bool>("confirm", "Reset ALL data (orders, scenario runs, timeline, wallets, stock) to the initial seed?")) return;
+        await Reset.ResetAllAsync();
         _orderId = null; _scenarioId = null;
+        Nav.NavigateTo("/developer", replace: true);
         await RefreshAsync();
     }
 

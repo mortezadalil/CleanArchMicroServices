@@ -170,6 +170,22 @@ public sealed class ServiceClients(HttpClient http, IOptions<ServiceUrls> urls, 
         catch (Exception) { return []; }
     }
 
+    /// <summary>Removes every message from all MiniShop queues (including *_error). Returns how many queues were purged.</summary>
+    public async Task<int> PurgeQueuesAsync(CancellationToken ct = default)
+    {
+        var purged = 0;
+        foreach (var queue in await QueuesAsync(ct))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete,
+                $"{Urls.RabbitMqManagement}/api/queues/%2F/{Uri.EscapeDataString(queue.Name)}/contents");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("guest:guest")));
+            using var response = await http.SendAsync(request, ct);
+            if (response.IsSuccessStatusCode) purged++;
+        }
+        return purged;
+    }
+
     // ---- optional local runner (S04) -----------------------------------------------------------------
     public bool RunnerAvailable => !string.IsNullOrWhiteSpace(Urls.Runner);
 

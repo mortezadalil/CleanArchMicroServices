@@ -69,6 +69,7 @@ builder.Services.AddScoped<ReadModelRebuilder>();
 builder.Services.AddHostedService<ReadModelBootstrapper>();   // asks the owners for a snapshot while the read model is empty
 builder.Services.AddScoped<ReadModelQueries>();
 builder.Services.AddScoped<CartService>();
+builder.Services.AddScoped<DemoResetService>();
 builder.Services.AddSingleton<UiNotifier>();
 builder.Services.AddSingleton<ScenarioRunner>();
 builder.Services.AddHttpClient<ServiceClients>(c => c.Timeout = TimeSpan.FromSeconds(10));

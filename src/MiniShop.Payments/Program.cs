@@ -61,9 +61,8 @@ if (app.MapDemoGroup("/demo") is { } demo)
     demo.MapPost("/reset", async (PaymentsDbContext db, FaultRegistry faults, OutboxSignal signal) =>
     {
         faults.Clear();
-        await db.Database.EnsureDeletedAsync();
-        await db.Database.EnsureCreatedAsync();
-        await WalletSeed.SeedAsync(db, CancellationToken.None);
+        await DatabaseReset.ClearAllTablesAsync(db);
+        await WalletSeed.SeedAsync(db, CancellationToken.None);    // demo-customer with 2,000,000, announced via the outbox
         signal.Notify();
         return Results.Ok(new { reset = true });
     });
