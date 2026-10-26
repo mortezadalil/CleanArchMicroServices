@@ -1,5 +1,7 @@
 # MiniShop — راهنمای سریع فارسی
 
+> 📚 دورهٔ کامل آموزشی (۱۷ ماژول، تمرین، برنامهٔ کلاس): [course/MiniShop-Microservices-Course.fa.md](course/MiniShop-Microservices-Course.fa.md)
+
 MiniShop یک فروشگاه بسیار ساده (سه محصول و یک کیف پول) است که پشت دکمهٔ «ثبت سفارش» آن یک جریان
 واقعی میکروسرویسی اجرا می‌شود: **Saga**، **Transactional Outbox**، **Inbox** برای حذف پیام تکراری،
 **CQRS** با دیتابیس خواندنی جدا و **RabbitMQ**. حالت توسعه‌دهنده (Developer Mode) همان چیزی را

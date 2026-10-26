@@ -9,7 +9,8 @@ invariants in the owners' databases.
 Nothing in the UI is a mock-up: every animation, counter and state comes from telemetry and audit
 records produced by the services themselves.
 
-> Persian quick start: [docs/README.fa.md](docs/README.fa.md)
+> Persian quick start: [docs/README.fa.md](docs/README.fa.md) ·
+> Persian course (17 modules, exercises, class plan): [docs/course/MiniShop-Microservices-Course.fa.md](docs/course/MiniShop-Microservices-Course.fa.md)
 
 ---
 
@@ -296,7 +297,7 @@ infra/runner               allow-listed docker stop/start helper for S04
 infra/seeds                where the deterministic demo data comes from
 scripts/                   run-local.sh, run-scenarios.sh
 tests/                     unit, integration and E2E projects
-docs/                      Persian quick start, licenses
+docs/                      Persian quick start, Persian course (docs/course), licenses
 ```
 
 ## 10. Licenses of dependencies
