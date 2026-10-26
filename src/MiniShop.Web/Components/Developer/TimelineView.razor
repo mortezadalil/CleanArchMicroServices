@@ -1,0 +1,82 @@
+@inject IJSRuntime JS
+
+@*
+    Event Timeline: append-only records with real timestamps.  Click a row to see ids (with copy),
+    publisher/handler, attempt, duration, outcome, error and the payload / snapshot JSON.
+*@
+<div class="timeline">
+    <table class="table compact">
+        <thead><tr><th>Time</th><th>Service</th><th>Kind</th><th>Subject</th><th>Detail</th><th>Att.</th></tr></thead>
+        <tbody>
+        @foreach (var e in Events)
+        {
+            <tr class="@(Selected?.Seq == e.Seq ? "selected" : "") @(e.Outcome == "Failed" ? "failed" : "")" @onclick="() => Select(e)">
+                <td class="mono">@Fmt.Time(e.OccurredAtUtc)</td>
+                <td>@e.Service</td>
+                <td><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span></td>
+                <td class="mono">@(e.SubjectMessageType ?? (e.Category == "Business" ? e.Kind : ""))</td>
+                <td class="detail">@e.Detail</td>
+                <td>@(e.Attempt > 0 ? e.Attempt.ToString() : "")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    @if (Events.Count == 0) { <p class="muted">No records for this filter yet.</p> }
+</div>
+
+@if (Selected is not null)
+{
+    <div class="detail-panel">
+        <h4>@Selected.Kind <small class="muted">#@Selected.Seq · @Selected.Category</small></h4>
+        <dl>
+            <dt>messageId</dt><dd class="mono">@Selected.MessageId <button class="ghost" @onclick="() => Copy(Selected.MessageId.ToString())">copy</button></dd>
+            <dt>correlationId (order)</dt><dd class="mono">@Selected.CorrelationId <button class="ghost" @onclick="() => Copy(Selected.CorrelationId.ToString())">copy</button> <a href="/orders/@Selected.CorrelationId">open order</a></dd>
+            <dt>causationId</dt><dd class="mono">@(Selected.CausationId?.ToString() ?? "—")</dd>
+            <dt>subject</dt><dd class="mono">@Selected.SubjectMessageType @Selected.SubjectMessageId</dd>
+            <dt>scenarioId</dt><dd class="mono">@(Selected.ScenarioId?.ToString() ?? "—")</dd>
+            <dt>producer / handler</dt><dd>@Selected.Service</dd>
+            <dt>attempt · duration · outcome</dt><dd>@Selected.Attempt · @(Selected.DurationMs is null ? "—" : $"{Selected.DurationMs:0} ms") · @(Selected.Outcome ?? "—")</dd>
+            @if (Selected.Error is not null) { <dt>error</dt><dd class="error">@Selected.Error</dd> }
+            <dt>occurred / recorded</dt><dd>@Fmt.Time(Selected.OccurredAtUtc) / @Fmt.Time(Selected.RecordedAtUtc)</dd>
+        </dl>
+        @if (Selected.Kind is "ConsumerFailed" or "MessageDeadLettered" or "RetryScheduled" or "FaultInjected")
+        {
+            <p class="hint"><b>Why &amp; expected action:</b> @Explain(Selected)</p>
+        }
+        @if (Selected.PayloadJson is not null) { <details open><summary>payload</summary><pre>@Pretty(Selected.PayloadJson)</pre></details> }
+        @if (Selected.SnapshotJson is not null) { <details open><summary>state snapshot after this step</summary><pre>@Pretty(Selected.SnapshotJson)</pre></details> }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<EventAudit> Events { get; set; } = [];
+    [Parameter] public EventAudit? Selected { get; set; }
+    [Parameter] public EventCallback<EventAudit?> SelectedChanged { get; set; }
+
+    private async Task Select(EventAudit e)
+    {
+        Selected = Selected?.Seq == e.Seq ? null : e;
+        await SelectedChanged.InvokeAsync(Selected);
+    }
+
+    private async Task Copy(string text) => await JS.InvokeVoidAsync("miniShop.copy", text);
+
+    public static string Pretty(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+
+    private static string Explain(EventAudit e) => e.Kind switch
+    {
+        "ConsumerFailed" => "The handler threw before commit, so nothing was written. MassTransit re-delivers the message after a short delay; the Inbox makes the retry safe.",
+        "MessageDeadLettered" => "All retries failed; the message is parked in the '_error' queue. The saga will time out and compensate, or an operator re-queues the message from the RabbitMQ UI.",
+        "RetryScheduled" => "The outbox dispatcher could not reach the broker (or crashed after publishing). The row stays pending and is retried with exponential backoff; no data was lost.",
+        "FaultInjected" => "This failure was injected by the Scenario Lab at a real code path; the services handled it exactly as they would handle a genuine fault.",
+        _ => "",
+    };
+}

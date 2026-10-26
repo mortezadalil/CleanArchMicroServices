@@ -1,0 +1,109 @@
+# MiniShop — everything needed for the classroom demo.
+#
+#   docker compose -f infra/compose.yaml up --build          # full stack (http://localhost:5100)
+#   docker compose -f infra/compose.yaml up rabbitmq         # broker only, run the 4 projects with `dotnet run`
+#   docker compose -f infra/compose.yaml --profile faults up # + the optional runner for S04 (stops/starts the broker)
+#
+# Every service has its own SQLite file in its own volume: no shared database.
+name: minishop
+
+x-service: &service
+  restart: unless-stopped            # S09: Orders exits on purpose and Docker brings it back
+  environment: &service-env
+    ASPNETCORE_ENVIRONMENT: Development          # enables the Development-only demo control plane
+    RabbitMq__Host: rabbitmq
+    Demo__Enabled: "true"
+    Demo__Token: minishop-dev
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: minishop-rabbitmq
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI (guest / guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  orders:
+    <<: *service
+    build: { context: .., dockerfile: src/MiniShop.Orders/Dockerfile }
+    container_name: minishop-orders
+    environment:
+      <<: *service-env
+      Database__Path: /data/orders.db
+    volumes: [ "orders-data:/data" ]
+    ports: [ "5101:8080" ]
+    healthcheck: &http-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  inventory:
+    <<: *service
+    build: { context: .., dockerfile: src/MiniShop.Inventory/Dockerfile }
+    container_name: minishop-inventory
+    environment:
+      <<: *service-env
+      Database__Path: /data/inventory.db
+    volumes: [ "inventory-data:/data" ]
+    ports: [ "5102:8080" ]
+    healthcheck: *http-health
+
+  payments:
+    <<: *service
+    build: { context: .., dockerfile: src/MiniShop.Payments/Dockerfile }
+    container_name: minishop-payments
+    environment:
+      <<: *service-env
+      Database__Path: /data/payments.db
+    volumes: [ "payments-data:/data" ]
+    ports: [ "5103:8080" ]
+    healthcheck: *http-health
+
+  web:
+    <<: *service
+    build: { context: .., dockerfile: src/MiniShop.Web/Dockerfile }
+    container_name: minishop-web
+    environment:
+      <<: *service-env
+      Database__Path: /data/readmodel.db
+      Services__Orders: http://orders:8080
+      Services__Inventory: http://inventory:8080
+      Services__Payments: http://payments:8080
+      Services__RabbitMqManagement: http://rabbitmq:15672
+      Services__Runner: http://runner:9000      # used only when the 'faults' profile is up
+      Services__OrdersRestartMode: Crash        # S09: real container restart
+    volumes: [ "web-data:/data" ]
+    ports: [ "5100:8080" ]
+    healthcheck: *http-health
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      orders: { condition: service_started }
+      inventory: { condition: service_started }
+      payments: { condition: service_started }
+
+  # Optional local runner for infrastructure faults (S04 "RabbitMQ outage").
+  # It is the ONLY component that touches the Docker socket, it accepts a fixed allowlist of
+  # actions/containers, and it is never exposed to the browser.  Start with: --profile faults
+  runner:
+    build: ./runner
+    container_name: minishop-runner
+    profiles: [ "faults" ]
+    volumes: [ "/var/run/docker.sock:/var/run/docker.sock" ]
+    environment:
+      ALLOWED_CONTAINERS: minishop-rabbitmq,minishop-orders,minishop-inventory,minishop-payments
+    restart: unless-stopped
+
+volumes:
+  orders-data:
+  inventory-data:
+  payments-data:
+  web-data:

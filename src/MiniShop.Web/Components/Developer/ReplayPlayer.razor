@@ -1,0 +1,78 @@
+@implements IDisposable
+
+@*
+    Event Replay: steps through the RECORDED timeline of an order (play / pause / previous / next /
+    speed).  It only re-shows stored records and their state snapshots; it never re-executes commands.
+*@
+<div class="panel">
+    <h3>Replay</h3>
+    @if (Events.Count == 0) { <p class="muted">Select an order with recorded events.</p> }
+    else
+    {
+        <div class="row">
+            <button class="btn small" @onclick="First">⏮</button>
+            <button class="btn small" @onclick="Prev">◀</button>
+            <button class="btn small" @onclick="TogglePlay">@(_playing ? "⏸ pause" : "▶ play")</button>
+            <button class="btn small" @onclick="Next">▶|</button>
+            <label class="small">speed <select @bind="_speed"><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option></select></label>
+            <span class="small muted">step @(_index + 1) / @Events.Count</span>
+        </div>
+        <input type="range" min="0" max="@(Events.Count - 1)" value="@_index" @oninput="OnSlider" style="width:100%" />
+        <div class="replay-step">
+            <p><span class="@Fmt.KindClass(Current.Kind)">@Current.Kind</span> <b>@Current.Service</b> <span class="mono muted">@Fmt.Time(Current.OccurredAtUtc)</span></p>
+            <p>@Current.Detail</p>
+            @if (Current.SnapshotJson is not null)
+            {
+                <details open><summary>state at this step (recorded snapshot, not a live query)</summary><pre>@TimelineView.Pretty(Current.SnapshotJson)</pre></details>
+            }
+            else { <p class="muted small">no state snapshot recorded for this step</p> }
+        </div>
+        <ol class="steps compact">
+            @for (var i = 0; i < Events.Count; i++)
+            {
+                var idx = i;
+                <li class="@(idx == _index ? "current" : idx < _index ? "done" : "")" @onclick="() => _index = idx">@Events[idx].Kind <small class="muted">@Events[idx].Service</small></li>
+            }
+        </ol>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<EventAudit> Events { get; set; } = [];
+    private int _index;
+    private bool _playing;
+    private double _speed = 1;
+    private CancellationTokenSource? _cts;
+
+    protected override void OnParametersSet() { if (_index >= Events.Count) _index = Math.Max(0, Events.Count - 1); }
+
+    private EventAudit Current => Events[_index];
+    private void OnSlider(ChangeEventArgs e) => _index = int.TryParse(e.Value?.ToString(), out var i) ? i : 0;
+    private void First() => _index = 0;
+    private void Prev() => _index = Math.Max(0, _index - 1);
+    private void Next() => _index = Math.Min(Events.Count - 1, _index + 1);
+
+    private void TogglePlay()
+    {
+        if (_playing) { _cts?.Cancel(); _playing = false; return; }
+        _playing = true;
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested && _index < Events.Count - 1)
+            {
+                // real timestamps drive the pace: wait the actual gap between records, scaled by speed (capped at 3s)
+                var gap = Events[_index + 1].OccurredAtUtc - Events[_index].OccurredAtUtc;
+                var wait = TimeSpan.FromMilliseconds(Math.Clamp(gap.TotalMilliseconds / _speed, 200, 3000));
+                await Task.Delay(wait, token);
+                _index++;
+                await InvokeAsync(StateHasChanged);
+            }
+            _playing = false;
+            await InvokeAsync(StateHasChanged);
+        }, token);
+    }
+
+    public void Dispose() => _cts?.Cancel();
+}

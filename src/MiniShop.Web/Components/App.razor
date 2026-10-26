@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        // Tiny helpers used by the Developer Console (copy ids, remember the theme).
+        window.miniShop = {
+            copy: text => navigator.clipboard && navigator.clipboard.writeText(text),
+            setTheme: theme => { document.documentElement.dataset.theme = theme; try { localStorage.setItem('minishop-theme', theme); } catch { } },
+            getTheme: () => { try { return localStorage.getItem('minishop-theme') || 'light'; } catch { return 'light'; } }
+        };
+        document.documentElement.dataset.theme = window.miniShop.getTheme();
+    </script>
+</body>
+</html>

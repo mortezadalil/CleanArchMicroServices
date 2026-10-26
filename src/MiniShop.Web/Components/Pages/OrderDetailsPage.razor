@@ -1,0 +1,71 @@
+@page "/orders/{OrderId:guid}"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+
+<PageTitle>Order @Fmt.Short(OrderId) · MiniShop</PageTitle>
+
+@if (_order is null)
+{
+    <h1>Order @Fmt.Short(OrderId)</h1>
+    <p class="muted">Processing… the order was accepted (202) and the read model has not received <code>OrderPlaced</code> yet.</p>
+}
+else
+{
+    <h1>Order <code>@Fmt.Short(OrderId)</code> <span class="@Fmt.StateClass(_order.State)">@_order.State</span></h1>
+    <p class="muted small">@StateExplanation(_order.State) @(_order.FailureReason is null ? "" : $"— {_order.FailureReason}")</p>
+
+    <div class="two-col">
+        <div>
+            <table class="table">
+                <thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
+                <tbody>
+                @foreach (var l in Lines)
+                {
+                    <tr><td>@l.ProductName</td><td>@l.Quantity</td><td>@Fmt.Money(l.UnitPrice)</td><td>@Fmt.Money(l.LineTotal)</td></tr>
+                }
+                </tbody>
+                <tfoot><tr><th colspan="3">Total</th><th>@Fmt.Money(_order.Amount)</th></tr></tfoot>
+            </table>
+            <a class="btn" href="/developer?orderId=@OrderId">Inspect flow in Developer Mode →</a>
+        </div>
+        <div>
+            <h3>What happened</h3>
+            <ol class="steps">
+                @foreach (var e in _timeline.Where(e => e.Category == "Business"))
+                {
+                    <li><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span> <small class="muted">@e.Service · @Fmt.Time(e.OccurredAtUtc)</small></li>
+                }
+            </ol>
+            @if (_order.State is "Pending" or "AwaitingPayment" or "Compensating" or "Rejecting")
+            {
+                <p class="muted small">⏳ Still in progress. This page updates automatically.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid OrderId { get; set; }
+    private OrderSummary? _order;
+    private List<EventAudit> _timeline = [];
+    private List<OrderLine> Lines => _order is null ? [] : System.Text.Json.JsonSerializer.Deserialize<List<OrderLine>>(_order.LinesJson, MiniShop.Shared.Messaging.Json.Options) ?? [];
+
+    protected override async Task OnParametersSetAsync() => await RefreshAsync();
+
+    protected override async Task RefreshAsync()
+    {
+        _order = await Queries.GetOrderDetailsAsync(OrderId);
+        _timeline = await Queries.GetOrderTimelineAsync(OrderId);
+    }
+
+    private static string StateExplanation(string state) => state switch
+    {
+        "Pending" => "Accepted. Inventory has not answered yet.",
+        "AwaitingPayment" => "Stock is reserved; the wallet is being charged.",
+        "Compensating" or "Rejecting" => "Something failed; the reservation is being released.",
+        "Confirmed" => "Paid and reserved stock has been consumed.",
+        "Rejected" => "Not fulfilled. Nothing was charged and no stock is held.",
+        "RequiresAttention" => "Compensation could not be confirmed; an operator must look.",
+        _ => "",
+    };
+}

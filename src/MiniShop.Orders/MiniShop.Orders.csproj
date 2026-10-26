@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>MiniShop.Orders</RootNamespace>
+    <UserSecretsId>minishop-orders</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Linked source: message contracts and shared building blocks (no project reference, no 5th project). -->
+    <Compile Include="../../contracts/**/*.cs" LinkBase="Contracts" />
+    <Compile Include="../../shared/**/*.cs" LinkBase="Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MassTransit.RabbitMQ" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+  </ItemGroup>
+
+</Project>

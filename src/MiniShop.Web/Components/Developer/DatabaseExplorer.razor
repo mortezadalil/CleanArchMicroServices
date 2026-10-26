@@ -1,0 +1,82 @@
+@inject ServiceClients Clients
+@inject ReadModelQueries Queries
+@using System.Text.Json.Nodes
+
+@*
+    Database Explorer: read-only view of the important rows of each database, through the owners'
+    diagnostics endpoints (no free SQL, no direct file access).  Filter by order id.
+*@
+<div class="panel">
+    <h3>Databases (read-only)</h3>
+    <p class="muted small">Order filter: <code>@(OrderId?.ToString() ?? "none")</code> <button class="btn small" @onclick="LoadAsync">refresh</button></p>
+    <div class="db-grid">
+        <section>
+            <h4>orders.db</h4>
+            @if (_order is not null)
+            {
+                <pre>@TimelineView.Pretty(_order.ToJsonString())</pre>
+            }
+            else
+            {
+                <table class="table compact"><thead><tr><th>Orders</th><th>customer</th><th>amount</th><th>state</th></tr></thead><tbody>
+                @foreach (var o in _orders) { <tr><td class="mono small">@Fmt.ShortId(o!["id"])</td><td class="small">@o["customerId"]</td><td>@o["amount"]</td><td>@o["state"]</td></tr> }
+                </tbody></table>
+                <table class="table compact"><thead><tr><th>SagaInstances</th><th>state</th><th>deadline</th><th>attempts</th><th>version</th></tr></thead><tbody>
+                @foreach (var s in _sagas) { <tr><td class="mono small">@Fmt.ShortId(s!["correlationId"])</td><td>@s["currentState"]</td><td class="small">@s["deadlineUtc"]</td><td>@s["compensationAttempts"]</td><td>@s["version"]</td></tr> }
+                </tbody></table>
+            }
+        </section>
+        <section>
+            <h4>inventory.db</h4>
+            <table class="table compact"><thead><tr><th>Stock</th><th>onHand</th><th>reserved</th><th>available</th></tr></thead><tbody>
+            @foreach (var s in _stock) { <tr><td>@s!["name"]</td><td>@s["onHand"]</td><td>@s["reserved"]</td><td><b>@s["available"]</b></td></tr> }
+            </tbody></table>
+            <table class="table compact"><thead><tr><th>Reservations</th><th>order</th><th>state</th><th>reason</th></tr></thead><tbody>
+            @foreach (var r in _reservations) { <tr><td class="mono small">@Fmt.ShortId(r!["id"])</td><td class="mono small">@Fmt.ShortId(r["orderId"])</td><td>@r["state"]</td><td class="small">@r["reason"]</td></tr> }
+            </tbody></table>
+        </section>
+        <section>
+            <h4>payments.db</h4>
+            <table class="table compact"><thead><tr><th>Wallets</th><th>balance</th><th>version</th></tr></thead><tbody>
+            @foreach (var w in _wallets) { <tr><td class="small">@w!["customerId"]</td><td>@w["balance"]</td><td>@w["version"]</td></tr> }
+            </tbody></table>
+            <table class="table compact"><thead><tr><th>WalletLedger</th><th>order</th><th>amount</th><th>op</th><th>state</th><th>reason</th></tr></thead><tbody>
+            @foreach (var l in _ledger) { <tr><td class="small">@l!["customerId"]</td><td class="mono small">@Fmt.ShortId(l["orderId"])</td><td>@l["amount"]</td><td>@l["operationType"]</td><td>@l["state"]</td><td class="small">@l["reason"]</td></tr> }
+            </tbody></table>
+        </section>
+        <section>
+            <h4>readmodel.db</h4>
+            <table class="table compact"><thead><tr><th>OrderSummaries</th><th>state</th><th>last event</th><th>updated</th></tr></thead><tbody>
+            @foreach (var o in _readOrders) { <tr><td class="mono small">@Fmt.Short(o.OrderId)</td><td>@o.State</td><td class="small">@o.LastEvent</td><td class="small">@Fmt.Time(o.UpdatedAtUtc)</td></tr> }
+            </tbody></table>
+            <table class="table compact"><thead><tr><th>ProductCards</th><th>price</th><th>available</th></tr></thead><tbody>
+            @foreach (var p in _cards) { <tr><td>@p.Name</td><td>@p.Price</td><td>@p.Available</td></tr> }
+            </tbody></table>
+        </section>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid? OrderId { get; set; }
+
+    private JsonNode? _order;
+    private JsonArray _orders = [], _sagas = [], _stock = [], _reservations = [], _wallets = [], _ledger = [];
+    private List<OrderSummary> _readOrders = [];
+    private List<ProductCard> _cards = [];
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    public async Task LoadAsync()
+    {
+        var f = OrderId is null ? "" : $"?orderId={OrderId}";
+        _order = OrderId is null ? null : await Clients.DiagnosticsAsync(ServiceNames.Orders, $"orders/{OrderId}");
+        _orders = OrderId is null ? (await Clients.DiagnosticsAsync(ServiceNames.Orders, "orders?take=10"))?.AsArray() ?? [] : [];
+        _sagas = OrderId is null ? (await Clients.DiagnosticsAsync(ServiceNames.Orders, "sagas?take=10"))?.AsArray() ?? [] : [];
+        _stock = (await Clients.DiagnosticsAsync(ServiceNames.Inventory, "stock"))?.AsArray() ?? [];
+        _reservations = (await Clients.DiagnosticsAsync(ServiceNames.Inventory, $"reservations{(f == "" ? "?take=10" : f)}"))?.AsArray() ?? [];
+        _wallets = (await Clients.DiagnosticsAsync(ServiceNames.Payments, "wallets"))?.AsArray() ?? [];
+        _ledger = (await Clients.DiagnosticsAsync(ServiceNames.Payments, $"ledger{(f == "" ? "?take=10" : f)}"))?.AsArray() ?? [];
+        _readOrders = OrderId is null ? await Queries.GetOrdersAsync(take: 10) : (await Queries.GetOrderDetailsAsync(OrderId.Value)) is { } o ? [o] : [];
+        _cards = await Queries.GetProductsAsync();
+    }
+}

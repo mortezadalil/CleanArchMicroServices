@@ -1,0 +1,44 @@
+@page "/developer/scenarios/{RunId:guid}"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+
+<PageTitle>Scenario report · MiniShop</PageTitle>
+<h1>Scenario report <small class="muted">@(_run?.Code) @(_run?.Title)</small></h1>
+<p><a href="@ConsoleLink">← open in the Developer Console</a>
+   @if (_run?.OrderId is { } oid) { <span> · <a href="/orders/@oid">store view of the order</a></span> }</p>
+
+@if (ScenarioCatalog.Find(_run?.Code ?? "") is { } def)
+{
+    <div class="panel"><p><b>What this scenario shows:</b> @def.Summary</p><p><b>Lesson:</b> @def.Lesson</p></div>
+}
+<ExpectedVsActual Run="_run" Assertions="_assertions" />
+
+@if (_run?.OrderId is not null)
+{
+    <h3>Before / during / after (recorded stock & wallet snapshots)</h3>
+    <table class="table compact">
+        <thead><tr><th>Time</th><th>Service</th><th>Step</th><th>Snapshot</th></tr></thead>
+        <tbody>
+        @foreach (var e in _timeline.Where(e => e.SnapshotJson is not null))
+        {
+            <tr><td class="small mono">@Fmt.Time(e.OccurredAtUtc)</td><td>@e.Service</td><td><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span> <small>@e.SubjectMessageType</small></td><td><pre class="inline">@e.SnapshotJson</pre></td></tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    [Parameter] public Guid RunId { get; set; }
+    private ScenarioRun? _run;
+    private List<ScenarioAssertion> _assertions = [];
+    private List<EventAudit> _timeline = [];
+    private string ConsoleLink => $"/developer?scenarioId={RunId}" + (_run?.OrderId is { } o ? $"&orderId={o}" : "");
+
+    protected override async Task OnParametersSetAsync() => await RefreshAsync();
+
+    protected override async Task RefreshAsync()
+    {
+        (_run, _assertions) = await Queries.GetScenarioRunAsync(RunId);
+        _timeline = _run?.OrderId is { } id ? await Queries.GetOrderTimelineAsync(id) : [];
+    }
+}

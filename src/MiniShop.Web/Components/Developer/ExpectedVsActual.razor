@@ -1,0 +1,41 @@
+@*
+    Scenario report: expected vs actual trace, invariants with evidence, counters.  Printed in the
+    same shape as the specification's example so students can compare runs.
+*@
+<div class="panel report">
+    @if (Run is null) { <p class="muted">No scenario run selected.</p> }
+    else
+    {
+        <pre class="report-text">Scenario: @Run.Code — @Run.Title
+Order: @(Run.OrderId?.ToString() ?? "—")
+Correlation: @(Run.OrderId?.ToString() ?? "—")
+Status: @Run.Status @(Run.Status == "Running" ? "⏳" : "")
+Expected: @string.Join(" -> ", Expected)
+Actual:   @string.Join(" -> ", Actual)
+Invariants: @(Assertions.Count == 0 ? "(none yet)" : string.Join(", ", Assertions.Select(a => $"[{(a.Passed ? "PASS" : "FAIL")}] {a.Name}")))
+Delivery attempts: @Run.DeliveryAttempts | Dedup hits: @Run.DedupHits | Final saga: @(Run.FinalSagaState ?? "—")
+@(Run.Summary is null ? "" : $"Summary: {Run.Summary}")</pre>
+        @if (Assertions.Count > 0)
+        {
+            <table class="table compact">
+                <thead><tr><th></th><th>Invariant</th><th>Evidence (read from the owner database)</th></tr></thead>
+                <tbody>
+                @foreach (var a in Assertions)
+                {
+                    <tr class="@(a.Passed ? "" : "failed")"><td>@(a.Passed ? "✅" : "❌")</td><td>@a.Name</td><td class="mono small">@a.Evidence</td></tr>
+                }
+                </tbody>
+            </table>
+        }
+        <details open><summary>run log</summary><pre class="log">@Run.Log</pre></details>
+    }
+</div>
+
+@code {
+    [Parameter] public ScenarioRun? Run { get; set; }
+    [Parameter] public IReadOnlyList<ScenarioAssertion> Assertions { get; set; } = [];
+
+    private List<string> Expected => Parse(Run?.ExpectedTraceJson);
+    private List<string> Actual => Parse(Run?.ActualTraceJson);
+    private static List<string> Parse(string? json) => json is null ? [] : System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
+}

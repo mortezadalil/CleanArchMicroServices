@@ -1,0 +1,170 @@
+@page "/developer"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+@inject ScenarioRunner Runner
+@inject ServiceClients Clients
+@inject NavigationManager Nav
+
+<PageTitle>Developer Console · MiniShop</PageTitle>
+
+<div class="dev-toolbar">
+    <h1>Developer Console</h1>
+    <div class="row">
+        <select @bind="_scenarioCode">
+            @foreach (var s in ScenarioCatalog.All) { <option value="@s.Code">@s.Code — @s.Title</option> }
+        </select>
+        <button class="primary" disabled="@(Runner.RunningId is not null)" @onclick="RunScenario">▶ Run</button>
+        @if (Runner.RunningId is { } running) { <span class="badge pending">running @_runs.FirstOrDefault(r => r.Id == running)?.Code …</span> }
+        <button class="btn small danger" @onclick="ResetAll" title="reset every database to the seed and remove all faults">Reset demo data</button>
+    </div>
+    @if (SelectedScenario is { } sd)
+    {
+        <p class="muted small"><b>@sd.Code</b> @sd.Summary <i>Lesson:</i> @sd.Lesson @(sd.Requirement is null ? "" : $"⚠ {sd.Requirement}")</p>
+    }
+    <div class="context">
+        <span>order: <code>@(_orderId?.ToString() ?? "none")</code></span>
+        @if (_orderId is not null) { <a href="/orders/@_orderId">store view</a> <button class="ghost" @onclick="() => SetOrder(null)">clear</button> }
+        <span>scenario: <code>@(_scenarioId?.ToString() ?? "none")</code></span>
+        @if (_scenarioId is not null) { <button class="ghost" @onclick="() => SetScenario(null)">clear</button> }
+        <span>service filter: <code>@(_service ?? "all")</code></span>
+        @if (_service is not null) { <button class="ghost" @onclick="() => _service = null">clear</button> }
+    </div>
+</div>
+
+<div class="dev-grid">
+    <section class="graph-area">
+        <h3>Architecture Explorer</h3>
+        <ServiceGraph Recent="_recent" Selected="@_service" OnSelect="s => _service = _service == s ? null : s" />
+    </section>
+    <aside class="inspector-area">
+        <SagaInspector OrderId="_orderId" Saga="_saga" Timeline="_orderTimeline" OnRetry="RetryCompensation" />
+        @if (_latestRun is not null)
+        {
+            <div class="panel">
+                <h3>Last scenario run <a class="btn small" href="/developer/scenarios/@_latestRun.Id">full report</a></h3>
+                <ExpectedVsActual Run="_latestRun" Assertions="_latestAssertions" />
+            </div>
+        }
+    </aside>
+</div>
+
+<nav class="tabs">
+    @foreach (var t in Tabs) { <button class="@(_tab == t ? "active" : "")" @onclick="() => _tab = t">@t</button> }
+</nav>
+
+<section class="tab-body">
+    @switch (_tab)
+    {
+        case "Timeline":
+            <div class="row small">
+                <label><input type="checkbox" @bind="_showDiagnostics" /> show diagnostics</label>
+                <input placeholder="search kind / detail" @bind="_search" @bind:event="oninput" />
+            </div>
+            <TimelineView Events="FilteredTimeline" @bind-Selected="_selectedEvent" />
+            break;
+        case "Messages":
+            <p class="muted small">Every record, newest first. Filters: order, scenario, service (click a node), search.</p>
+            <div class="row small"><input placeholder="search" @bind="_search" @bind:event="oninput" /></div>
+            <TimelineView Events="_messages" @bind-Selected="_selectedEvent" />
+            break;
+        case "Outbox/Inbox":
+            <OutboxInboxInspector OrderId="_orderId" ScenarioId="_scenarioId" />
+            break;
+        case "Database":
+            <DatabaseExplorer OrderId="_orderId" />
+            break;
+        case "CQRS":
+            <CqrsExplorer OrderId="_orderId" />
+            break;
+        case "Replay":
+            <ReplayPlayer Events="_orderTimeline" />
+            break;
+        case "Faults":
+            <FaultPanel />
+            break;
+        case "Scenario runs":
+            <ScenarioRunsTable Runs="_runs" />
+            break;
+    }
+</section>
+
+@code {
+    private static readonly string[] Tabs = ["Timeline", "Messages", "Outbox/Inbox", "Database", "CQRS", "Replay", "Faults", "Scenario runs"];
+
+    [SupplyParameterFromQuery(Name = "orderId")] public Guid? QueryOrderId { get; set; }
+    [SupplyParameterFromQuery(Name = "scenarioId")] public Guid? QueryScenarioId { get; set; }
+
+    private Guid? _orderId, _scenarioId;
+    private string? _service;
+    private string _tab = "Timeline";
+    private string _scenarioCode = "S01";
+    private bool _showDiagnostics = true;
+    private string _search = "";
+
+    private List<EventAudit> _recent = [], _orderTimeline = [], _messages = [];
+    private SagaSnapshot? _saga;
+    private List<ScenarioRun> _runs = [];
+    private ScenarioRun? _latestRun;
+    private List<ScenarioAssertion> _latestAssertions = [];
+    private EventAudit? _selectedEvent;
+
+    private ScenarioDefinition? SelectedScenario => ScenarioCatalog.Find(_scenarioCode);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (QueryOrderId is not null) _orderId = QueryOrderId;
+        if (QueryScenarioId is not null) _scenarioId = QueryScenarioId;
+        await RefreshAsync();
+    }
+
+    protected override async Task RefreshAsync()
+    {
+        _recent = await Queries.GetRecentAsync(60, DateTime.UtcNow.AddSeconds(-6));
+        _runs = await Queries.GetScenarioRunsAsync(20);
+        _latestRun = _scenarioId is { } sid ? _runs.FirstOrDefault(r => r.Id == sid) ?? (await Queries.GetScenarioRunAsync(sid)).Run : _runs.FirstOrDefault();
+        if (_latestRun is not null)
+        {
+            _latestAssertions = (await Queries.GetScenarioRunAsync(_latestRun.Id)).Assertions;
+            // follow the running scenario: its first order becomes the inspected order
+            if (_latestRun.OrderId is { } oid && (_orderId is null || _scenarioId == _latestRun.Id)) _orderId = oid;
+        }
+        _orderTimeline = _orderId is null ? [] : await Queries.GetOrderTimelineAsync(_orderId.Value);
+        _saga = _orderId is null ? null : await Queries.GetSagaAsync(_orderId.Value);
+        _messages = await Queries.GetMessageTraceAsync(_orderId, _scenarioId, _service, null, _search, 200);
+    }
+
+    private IReadOnlyList<EventAudit> FilteredTimeline
+    {
+        get
+        {
+            IEnumerable<EventAudit> source = _orderId is null ? _messages.AsEnumerable().Reverse() : _orderTimeline;
+            if (!_showDiagnostics) source = source.Where(e => e.Category == "Business" || e.Kind is "SagaTransitioned" or "FaultInjected");
+            if (_service is not null) source = source.Where(e => e.Service == _service);
+            if (!string.IsNullOrWhiteSpace(_search)) source = source.Where(e => e.Kind.Contains(_search, StringComparison.OrdinalIgnoreCase) || (e.Detail?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+            return source.ToList();
+        }
+    }
+
+    private async Task RunScenario()
+    {
+        var run = await Runner.StartAsync(_scenarioCode);
+        if (run is null) return;
+        _scenarioId = run.Id;
+        _orderId = null;
+        Nav.NavigateTo($"/developer?scenarioId={run.Id}", replace: true);
+        await RefreshAsync();
+    }
+
+    private async Task ResetAll()
+    {
+        await Clients.RemoveFaultsEverywhereAsync(null);
+        foreach (var s in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
+            try { await Clients.ResetServiceAsync(s); } catch (Exception) { }
+        _orderId = null; _scenarioId = null;
+        await RefreshAsync();
+    }
+
+    private async Task SetOrder(Guid? id) { _orderId = id; await RefreshAsync(); }
+    private async Task SetScenario(Guid? id) { _scenarioId = id; await RefreshAsync(); }
+    private async Task RetryCompensation(Guid orderId) { await Clients.RetryCompensationAsync(orderId); await RefreshAsync(); }
+}

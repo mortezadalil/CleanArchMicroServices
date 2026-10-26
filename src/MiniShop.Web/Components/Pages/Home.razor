@@ -1,0 +1,70 @@
+@page "/"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+@inject CartService Cart
+@inject NavigationManager Nav
+
+<PageTitle>MiniShop</PageTitle>
+
+<section class="hero">
+    <h1>Welcome to MiniShop</h1>
+    <p>Three products, one wallet, and a real distributed order flow behind the "Buy" button.</p>
+    <div class="wallet-card">
+        <span>Wallet of <b>@Cart.CustomerId</b></span>
+        <strong>@(_wallet is null ? "…" : Fmt.Money(_wallet.Balance))</strong>
+        @if (_wallet is not null) { <small>updated @Fmt.Ago(_wallet.UpdatedAtUtc) · read model</small> }
+    </div>
+</section>
+
+@if (_products.Count == 0)
+{
+    <p class="muted">Waiting for the catalog… (Inventory publishes <code>ProductCatalogChanged</code>; the Web projects it.)</p>
+}
+else
+{
+    <div class="grid products">
+        @foreach (var p in _products)
+        {
+            <article class="card product">
+                <div class="emoji">@Emoji(p.Name)</div>
+                <h3>@p.Name</h3>
+                <p class="price">@Fmt.Money(p.Price)</p>
+                <p class="@(p.Available > 0 ? "stock" : "stock out")">
+                    @(p.Available > 0 ? $"{p.Available} available" : "out of stock")
+                    @if (p.Reserved > 0) { <small> (@p.Reserved reserved)</small> }
+                </p>
+                <div class="row">
+                    <input type="number" min="1" max="99" @bind="_qty[p.ProductId]" />
+                    <button class="primary" disabled="@(p.Available <= 0)" @onclick="() => Add(p)">Add to cart</button>
+                </div>
+            </article>
+        }
+    </div>
+}
+
+@if (_added is not null)
+{
+    <div class="toast">@_added added · <a href="/cart">go to cart (@Cart.Count)</a></div>
+}
+
+@code {
+    private List<ProductCard> _products = [];
+    private WalletBalance? _wallet;
+    private readonly Dictionary<Guid, int> _qty = new();
+    private string? _added;
+
+    protected override async Task RefreshAsync()
+    {
+        _products = await Queries.GetProductsAsync();
+        _wallet = await Queries.GetWalletAsync(Cart.CustomerId);
+        foreach (var p in _products) _qty.TryAdd(p.ProductId, 1);
+    }
+
+    private void Add(ProductCard p)
+    {
+        Cart.Add(p, _qty.GetValueOrDefault(p.ProductId, 1));
+        _added = p.Name;
+    }
+
+    private static string Emoji(string name) => name switch { "Headphones" => "🎧", "Keyboard" => "⌨️", "Mouse" => "🖱️", _ => "📦" };
+}

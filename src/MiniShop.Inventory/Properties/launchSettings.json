@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "MiniShop.Inventory": {
+      "commandName": "Project",
+      "applicationUrl": "http://localhost:5102",
+      "environmentVariables": { "ASPNETCORE_ENVIRONMENT": "Development" }
+    }
+  }
+}

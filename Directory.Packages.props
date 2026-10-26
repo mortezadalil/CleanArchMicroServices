@@ -1,0 +1,23 @@
+<Project>
+  <!--
+    Central Package Management: every package version is pinned here, exactly once.
+    These versions were verified to build together on .NET 10:
+      - MassTransit 8.5.x is the last Apache-2.0 licensed line (9.x is commercial).
+      - EF Core 10 with the SQLite provider.
+  -->
+  <ItemGroup>
+    <PackageVersion Include="MassTransit" Version="8.5.12" />
+    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.14" />
+    <!-- Tests -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.1" />
+  </ItemGroup>
+</Project>

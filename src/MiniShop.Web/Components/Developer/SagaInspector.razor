@@ -1,0 +1,45 @@
+@*
+    Saga Inspector: current state, history of transitions, deadline/compensation counters.
+    Everything comes from SagaTransitioned diagnostics emitted by the Orders service after each commit.
+*@
+<div class="panel">
+    <h3>Saga Inspector</h3>
+    @if (OrderId is null) { <p class="muted">Select an order (from the timeline or My Orders → Inspect flow).</p> }
+    else if (Saga is null) { <p class="muted">No saga snapshot for @Fmt.Short(OrderId) yet.</p> }
+    else
+    {
+        <p>Order <code>@Fmt.Short(OrderId)</code> · state <span class="@Fmt.StateClass(Saga.CurrentState)">@Saga.CurrentState</span> · @Saga.Transitions transition(s)</p>
+        <div class="statechart">
+            @foreach (var s in States)
+            {
+                <span class="state @(s == Saga.CurrentState ? "current" : Visited.Contains(s) ? "visited" : "")">@s</span>
+            }
+        </div>
+        <ol class="steps">
+            @foreach (var t in Transitions)
+            {
+                <li><small class="mono muted">@Fmt.Time(t.OccurredAtUtc)</small> @t.Detail</li>
+            }
+        </ol>
+        @if (Saga.SnapshotJson is not null) { <details><summary>persisted saga/order row (after last transition)</summary><pre>@TimelineView.Pretty(Saga.SnapshotJson)</pre></details> }
+        @if (Saga.CurrentState == "RequiresAttention")
+        {
+            <p class="hint">Compensation was not confirmed after the allowed attempts. Remove the cause, then <button class="btn small" @onclick="() => OnRetry.InvokeAsync(OrderId!.Value)">retry compensation</button>.</p>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid? OrderId { get; set; }
+    [Parameter] public SagaSnapshot? Saga { get; set; }
+    [Parameter] public IReadOnlyList<EventAudit> Timeline { get; set; } = [];
+    [Parameter] public EventCallback<Guid> OnRetry { get; set; }
+
+    private static readonly string[] States =
+        ["Started", "WaitingForStock", "WaitingForPayment", "Completed", "WaitingForPaymentCancellation", "WaitingForRelease", "Rejected", "RequiresAttention"];
+
+    private static readonly string[] Separators = [" → ", "→", ":"];
+    private IEnumerable<EventAudit> Transitions => Timeline.Where(e => e.Kind == "SagaTransitioned");
+    private HashSet<string> Visited => Transitions.SelectMany(t => (t.Detail ?? "").Split(Separators, StringSplitOptions.None).Select(x => x.Trim()))
+        .Where(States.Contains).ToHashSet();
+}

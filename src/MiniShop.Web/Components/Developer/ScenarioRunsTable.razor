@@ -1,0 +1,20 @@
+<table class="table compact">
+    <thead><tr><th>Started</th><th>Code</th><th>Scenario</th><th>Status</th><th>Order</th><th>Attempts</th><th>Dedup</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var r in Runs)
+    {
+        <tr>
+            <td class="small">@Fmt.Time(r.StartedAtUtc)</td><td>@r.Code</td><td>@r.Title</td>
+            <td><span class="@Fmt.StateClass(r.Status)">@r.Status</span></td>
+            <td class="mono small">@(r.OrderId is null ? "—" : Fmt.Short(r.OrderId))</td>
+            <td>@r.DeliveryAttempts</td><td>@r.DedupHits</td>
+            <td><a class="btn small" href="/developer/scenarios/@r.Id">report</a></td>
+        </tr>
+    }
+    </tbody>
+</table>
+@if (Runs.Count == 0) { <p class="muted small">no runs yet</p> }
+
+@code {
+    [Parameter] public IReadOnlyList<ScenarioRun> Runs { get; set; } = [];
+}

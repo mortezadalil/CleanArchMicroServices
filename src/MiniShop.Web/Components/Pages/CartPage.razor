@@ -1,0 +1,70 @@
+@page "/cart"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+@inject CartService Cart
+@inject ServiceClients Clients
+@inject NavigationManager Nav
+
+<PageTitle>Cart · MiniShop</PageTitle>
+<h1>Cart &amp; Checkout</h1>
+
+@if (Cart.Lines.Count == 0)
+{
+    <p class="muted">Your cart is empty. <a href="/">Back to the store</a></p>
+}
+else
+{
+    <table class="table">
+        <thead><tr><th>Product</th><th>Unit price</th><th>Qty</th><th>Total</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var line in Cart.Lines)
+        {
+            <tr>
+                <td>@line.ProductName</td>
+                <td>@Fmt.Money(line.UnitPrice)</td>
+                <td><input type="number" min="1" max="99" value="@line.Quantity" @onchange="e => SetQuantity(line.ProductId, e)" /></td>
+                <td>@Fmt.Money(line.LineTotal)</td>
+                <td><button class="ghost" @onclick="() => Cart.Remove(line.ProductId)">✕</button></td>
+            </tr>
+        }
+        </tbody>
+        <tfoot><tr><th colspan="3">Total</th><th>@Fmt.Money(Cart.Total)</th><th></th></tr></tfoot>
+    </table>
+
+    <div class="checkout">
+        <p>Wallet balance: <b>@(_wallet is null ? "…" : Fmt.Money(_wallet.Balance))</b>
+            @if (_wallet is not null && _wallet.Balance < Cart.Total) { <span class="badge warn">not enough — the order will be rejected (that is scenario S03)</span> }
+        </p>
+        <p class="muted small">The cart is UI state kept in this Blazor circuit (a full page reload empties it). Idempotency-Key for this cart: <code>@Cart.IdempotencyKey</code> — a retried click can never create two orders.</p>
+        <button class="primary big" disabled="@_busy" @onclick="Checkout">@(_busy ? "Placing order…" : "Place order")</button>
+        @if (_error is not null) { <p class="error">@_error</p> }
+    </div>
+}
+
+@code {
+    private WalletBalance? _wallet;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task RefreshAsync() => _wallet = await Queries.GetWalletAsync(Cart.CustomerId);
+
+    private void SetQuantity(Guid productId, ChangeEventArgs e) =>
+        Cart.SetQuantity(productId, int.TryParse(e.Value?.ToString(), out var q) ? q : 1);
+
+    /// <summary>POST /api/orders → 202 + orderId. The saga runs asynchronously; the order page shows the progress.</summary>
+    private async Task Checkout()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var response = await Clients.PlaceOrderAsync(new PlaceOrderRequest(Cart.CustomerId, Cart.Lines.ToList(), null), Cart.IdempotencyKey);
+            Cart.Clear();
+            Nav.NavigateTo($"/orders/{response.OrderId}");
+        }
+        catch (Exception ex)
+        {
+            _error = $"The Orders API could not be reached ({ex.Message}). The cart and its Idempotency-Key are kept: try again.";
+        }
+        finally { _busy = false; }
+    }
+}

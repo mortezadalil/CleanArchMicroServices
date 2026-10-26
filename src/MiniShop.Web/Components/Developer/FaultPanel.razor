@@ -1,0 +1,91 @@
+@inject ServiceClients Clients
+@using MiniShop.Shared.Faults
+
+@*
+    Demo Control Plane: the named controls of the specification, each mapped to a real activation point.
+    Rules are scoped (service + point), limited (hits) and expire automatically; "Clear all" removes them everywhere.
+*@
+<div class="panel">
+    <h3>Fault injection</h3>
+    <p class="muted small">Each button registers a rule inside the target service; the next matching message triggers it and a <code>FaultInjected</code> record appears in the timeline.</p>
+    <div class="fault-buttons">
+        @foreach (var c in Controls)
+        {
+            <button class="btn small" title="@c.Description" @onclick="() => Arm(c)">@c.Name</button>
+        }
+        <button class="btn small danger" @onclick="ClearAll">Clear all faults</button>
+    </div>
+    @if (_message is not null) { <p class="hint">@_message</p> }
+
+    <h4>Active rules</h4>
+    @if (_rules.All(r => r.Value.Count == 0)) { <p class="muted small">none</p> }
+    else
+    {
+        <table class="table compact">
+            <thead><tr><th>Service</th><th>Point</th><th>Kind</th><th>Hits left</th><th>Scope</th><th>Expires</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var (service, rules) in _rules)
+            {
+                @foreach (var r in rules)
+                {
+                    <tr>
+                        <td>@service</td><td class="mono">@r.ActivationPoint</td><td>@r.Kind @(r.Kind == FaultKind.Delay ? $"{r.DelayMs}ms" : "")</td>
+                        <td>@(r.RemainingHits?.ToString() ?? "∞") (hit @r.Hits×)</td>
+                        <td class="mono small">@(r.ScenarioId is null ? "global" : $"scenario {Fmt.Short(r.ScenarioId)}")</td>
+                        <td class="small">@(r.ExpiresAtUtc is null ? "—" : Fmt.Time(r.ExpiresAtUtc.Value))</td>
+                        <td><button class="ghost" @onclick="() => Remove(service, r.Id)">✕</button></td>
+                    </tr>
+                }
+            }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private sealed record Control(string Name, string Service, string Point, FaultKind Kind, string Description, int? Hits = 1, int DelayMs = 0);
+
+    private static readonly Control[] Controls =
+    [
+        new("FailNextPayment", ServiceNames.Payments, FaultPoints.PaymentsCharge, FaultKind.Reject, "Decline the next ChargeWallet (PaymentFailed → compensation)"),
+        new("RejectStockReservation", ServiceNames.Inventory, FaultPoints.InventoryReserve, FaultKind.Reject, "Refuse the next ReserveStock"),
+        new("DelayInventoryConsumer", ServiceNames.Inventory, FaultPoints.InventoryReserve, FaultKind.Delay, "Slow the next ReserveStock by 5s", DelayMs: 5000),
+        new("DuplicateNextMessage", ServiceNames.Orders, FaultPoints.OutboxDispatch, FaultKind.Duplicate, "Publish the next outbox row of Orders twice"),
+        new("PauseOutboxDelivery", ServiceNames.Orders, FaultPoints.OutboxDispatch, FaultKind.Pause, "Hold every outbox row of Orders until cleared", Hits: null),
+        new("PausePaymentsConsumer", ServiceNames.Payments, FaultPoints.PaymentsCharge, FaultKind.Pause, "Hold ChargeWallet messages in the consumer until cleared", Hits: null),
+        new("DelayProjection", ServiceNames.Web, FaultPoints.WebProjection, FaultKind.Delay, "Delay the next 5 projections by 3s", Hits: 5, DelayMs: 3000),
+        new("FailNextDbSave", ServiceNames.Inventory, FaultPoints.DbSaveChanges, FaultKind.Fail, "Inventory's next SaveChanges throws (transient DB failure)"),
+        new("FailReleaseStock", ServiceNames.Inventory, FaultPoints.InventoryRelease, FaultKind.Fail, "ReleaseStock keeps failing until cleared", Hits: null),
+        new("SimulateLatePayment", ServiceNames.Payments, FaultPoints.PaymentsCharge, FaultKind.Delay, "Process the next payment 30s late (after the saga timeout)", DelayMs: 30000),
+        new("CrashAfterPublish", ServiceNames.Orders, FaultPoints.OutboxAfterPublish, FaultKind.Fail, "Crash after publish, before mark-as-published (redelivery)"),
+    ];
+
+    private Dictionary<string, IReadOnlyList<FaultRule>> _rules = new();
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    public async Task LoadAsync()
+    {
+        foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments, ServiceNames.Web })
+            _rules[service] = await Clients.ListFaultsAsync(service);
+    }
+
+    private async Task Arm(Control c)
+    {
+        try
+        {
+            await Clients.AddFaultAsync(c.Service, new FaultRule
+            {
+                ActivationPoint = c.Point, Kind = c.Kind, RemainingHits = c.Hits, DelayMs = c.DelayMs,
+                Description = c.Description, ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
+            });
+            _message = $"{c.Name} armed in {c.Service}: {c.Description}";
+        }
+        catch (Exception ex) { _message = $"could not reach {c.Service}: {ex.Message}"; }
+        await LoadAsync();
+    }
+
+    private async Task Remove(string service, Guid id) { await Clients.RemoveFaultAsync(service, id); await LoadAsync(); }
+    private async Task ClearAll() { await Clients.RemoveFaultsEverywhereAsync(null); _message = "all rules removed"; await LoadAsync(); }
+}

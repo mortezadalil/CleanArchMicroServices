@@ -1,0 +1,47 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="shell">
+    <header class="topbar">
+        <a class="brand" href="/">🛍️ MiniShop</a>
+        <nav>
+            <NavLink href="/" Match="NavLinkMatch.All">Store</NavLink>
+            <NavLink href="/cart">Cart</NavLink>
+            <NavLink href="/orders">My Orders</NavLink>
+            <NavLink href="@DeveloperHref" class="dev">Developer Mode</NavLink>
+        </nav>
+        <button class="ghost" title="toggle light/dark" @onclick="ToggleTheme">◐</button>
+    </header>
+    <main>@Body</main>
+    <footer class="foot">Educational microservices demo · Saga · Outbox · Inbox · CQRS · RabbitMQ</footer>
+</div>
+
+@code {
+    private string _theme = "light";
+
+    /// <summary>Switching to Developer Mode keeps the current order context (orderId in the URL).</summary>
+    private string DeveloperHref
+    {
+        get
+        {
+            var uri = new Uri(Nav.Uri);
+            var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 2 && segments[0] == "orders" && Guid.TryParse(segments[1], out var id))
+                return $"/developer?orderId={id}";
+            return "/developer";
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            _theme = await JS.InvokeAsync<string>("miniShop.getTheme");
+    }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        await JS.InvokeVoidAsync("miniShop.setTheme", _theme);
+    }
+}

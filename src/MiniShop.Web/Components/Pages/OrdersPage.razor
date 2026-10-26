@@ -1,0 +1,34 @@
+@page "/orders"
+@inherits LiveComponentBase
+@inject ReadModelQueries Queries
+@inject CartService Cart
+
+<PageTitle>My Orders · MiniShop</PageTitle>
+<h1>My Orders</h1>
+<p class="muted small">This list is the <b>read model</b> (readmodel.db), updated from events. A state can lag a moment behind the Orders service: that is eventual consistency.</p>
+
+@if (_orders.Count == 0) { <p class="muted">No orders yet.</p> }
+else
+{
+    <table class="table">
+        <thead><tr><th>Order</th><th>Created</th><th>Amount</th><th>State</th><th>Last event</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var o in _orders)
+        {
+            <tr>
+                <td><a href="/orders/@o.OrderId"><code>@Fmt.Short(o.OrderId)</code></a></td>
+                <td>@Fmt.Time(o.CreatedAtUtc)</td>
+                <td>@Fmt.Money(o.Amount)</td>
+                <td><span class="@Fmt.StateClass(o.State)">@o.State</span></td>
+                <td class="muted small">@o.LastEvent</td>
+                <td><a class="btn small" href="/developer?orderId=@o.OrderId">Inspect flow</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<OrderSummary> _orders = [];
+    protected override async Task RefreshAsync() => _orders = await Queries.GetOrdersAsync(Cart.CustomerId);
+}

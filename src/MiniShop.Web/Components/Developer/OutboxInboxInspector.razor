@@ -1,0 +1,77 @@
+@inject ServiceClients Clients
+@inject ReadModelQueries Queries
+@using System.Text.Json.Nodes
+
+@*
+    Outbox / Inbox Inspector: counters from telemetry + the live tables read through each owner's
+    read-only diagnostics endpoint (never by opening its SQLite file).
+*@
+<div class="panel">
+    <h3>Outbox / Inbox</h3>
+    <div class="cards">
+        <div class="stat"><span>Outbox stored</span><b>@Count("OutboxStored")</b></div>
+        <div class="stat"><span>Outbox dispatched</span><b>@Count("OutboxDispatched")</b></div>
+        <div class="stat"><span>Outbox retries</span><b>@Count("RetryScheduled")</b></div>
+        <div class="stat"><span>Dedup hits (Inbox)</span><b>@Count("InboxDuplicateIgnored")</b></div>
+        <div class="stat"><span>Consumer failures</span><b>@Count("ConsumerFailed")</b></div>
+        <div class="stat"><span>Dead-lettered</span><b>@Count("MessageDeadLettered")</b></div>
+    </div>
+    <p class="muted small">@(OrderId is null ? "All records." : $"Filtered to order {Fmt.Short(OrderId)}.") <button class="btn small" @onclick="LoadAsync">refresh tables</button></p>
+
+    @foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
+    {
+        <h4>@service <small class="muted">pending: @(_pending.GetValueOrDefault(service, -1) is var p && p >= 0 ? p.ToString() : "n/a")</small></h4>
+        <div class="two-col">
+            <table class="table compact">
+                <thead><tr><th>Outbox</th><th>type</th><th>dest</th><th>attempts</th><th>published</th><th>last error</th></tr></thead>
+                <tbody>
+                @foreach (var row in _outbox.GetValueOrDefault(service) ?? [])
+                {
+                    <tr class="@(row!["publishedAtUtc"] is null ? "pending-row" : "")">
+                        <td class="mono small">@Fmt.ShortId(row["messageId"])</td>
+                        <td>@row["type"]</td><td class="small">@(row["destinationQueue"]?.GetValue<string>() ?? "publish")</td>
+                        <td>@row["attempts"]</td><td class="small">@(row["publishedAtUtc"] is null ? "⏳ pending" : "✓")</td>
+                        <td class="small error">@row["lastError"]</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+            <table class="table compact">
+                <thead><tr><th>Inbox</th><th>type</th><th>received</th></tr></thead>
+                <tbody>
+                @foreach (var row in _inbox.GetValueOrDefault(service) ?? [])
+                {
+                    <tr><td class="mono small">@Fmt.ShortId(row!["messageId"])</td><td>@row["messageType"]</td><td class="small">@row["receivedAtUtc"]</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid? OrderId { get; set; }
+    [Parameter] public Guid? ScenarioId { get; set; }
+
+    private Dictionary<string, int> _counts = new();
+    private readonly Dictionary<string, int> _pending = new();
+    private readonly Dictionary<string, JsonArray> _outbox = new();
+    private readonly Dictionary<string, JsonArray> _inbox = new();
+
+    private int Count(string kind) => _counts.GetValueOrDefault(kind);
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    public async Task LoadAsync()
+    {
+        _counts = await Queries.GetDiagnosticCountsAsync(ScenarioId);
+        var filter = OrderId is null ? "" : $"&orderId={OrderId}";
+        foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
+        {
+            var outbox = await Clients.DiagnosticsAsync(service, $"outbox?take=15{filter}");
+            _pending[service] = outbox?["pending"]?.GetValue<int>() ?? -1;
+            _outbox[service] = outbox?["rows"]?.AsArray() ?? [];
+            _inbox[service] = (await Clients.DiagnosticsAsync(service, $"inbox?take=10{filter}"))?.AsArray() ?? [];
+        }
+    }
+}

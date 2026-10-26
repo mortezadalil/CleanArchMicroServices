@@ -1,0 +1,86 @@
+@inject ServiceHealthMonitor Health
+@inject ServiceClients Clients
+
+@*
+    Architecture Explorer: the four projects + RabbitMQ.  Node colour AND text come from real health
+    polls; a dot travels along an edge only when a MessagePublished / MessageConsumed record of the
+    last few seconds exists for it.  Clicking a node filters the timeline below to that service.
+*@
+<div class="graph-wrap">
+    <svg viewBox="0 0 640 300" class="graph" role="img" aria-label="service graph">
+        @foreach (var e in Edges)
+        {
+            <line x1="@e.From.X" y1="@e.From.Y" x2="@e.To.X" y2="@e.To.Y" class="edge @(e.Active ? e.Kind : "")" />
+        }
+        @foreach (var e in Edges.Where(e => e.Active))
+        {
+            <circle r="5" class="dot @e.Kind">
+                <animateMotion dur="1.2s" repeatCount="indefinite" path="M@(e.From.X),@(e.From.Y) L@(e.To.X),@(e.To.Y)" />
+            </circle>
+        }
+        @foreach (var n in Nodes)
+        {
+            var status = Health.Nodes.GetValueOrDefault(n.Name);
+            var cls = status is null ? "unknown" : status.Up ? (status.Status == "Degraded" ? "degraded" : "up") : "down";
+            <g class="node @cls @(Selected == n.Name ? "selected" : "")" @onclick="() => OnSelect.InvokeAsync(n.Name)" style="cursor:pointer">
+                <rect x="@(n.X - 58)" y="@(n.Y - 26)" width="116" height="52" rx="10" />
+                <text x="@n.X" y="@(n.Y - 4)" text-anchor="middle" class="label">@n.Name</text>
+                <text x="@n.X" y="@(n.Y + 14)" text-anchor="middle" class="status">@(status?.Status ?? "…")</text>
+            </g>
+        }
+    </svg>
+    <div class="legend">
+        <span class="kind command">command</span> <span class="kind event">event</span> <span class="kind comp">compensation</span>
+        <span class="kind failure">retry/failure</span>
+        @foreach (var q in Health.Queues)
+        {
+            <span class="queue" title="ready / unacked / consumers">@q.Name.Replace("minishop.", "") <b>@q.Ready</b>/@q.Unacked/@q.Consumers</span>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>Records from the last few seconds; used to animate the edges.</summary>
+    [Parameter] public IReadOnlyList<EventAudit> Recent { get; set; } = [];
+    [Parameter] public string? Selected { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    private sealed record Node(string Name, int X, int Y);
+    private sealed record Edge(Node From, Node To, bool Active, string Kind);
+
+    private static readonly Node Web = new("Web", 90, 150);
+    private static readonly Node Orders = new("Orders", 320, 60);
+    private static readonly Node Broker = new("RabbitMQ", 320, 150);
+    private static readonly Node Inventory = new("Inventory", 550, 60);
+    private static readonly Node Payments = new("Payments", 550, 240);
+    private static readonly Node[] Nodes = [Web, Orders, Broker, Inventory, Payments];
+
+    private List<Edge> Edges => BuildEdges();
+
+    private List<Edge> BuildEdges()
+    {
+        var edges = new List<Edge>();
+        var since = DateTime.UtcNow.AddSeconds(-4);
+        var recent = Recent.Where(r => r.RecordedAtUtc >= since).ToList();
+
+        foreach (var node in new[] { Web, Orders, Inventory, Payments })
+        {
+            var published = recent.Where(r => r.Kind == "MessagePublished" && r.Service == node.Name).ToList();
+            var consumed = recent.Where(r => r.Kind is "MessageConsumed" or "ConsumerFailed" or "InboxDuplicateIgnored" && r.Service == node.Name).ToList();
+            edges.Add(new Edge(node, Broker, published.Count > 0, KindOf(published)));
+            edges.Add(new Edge(Broker, node, consumed.Count > 0, KindOf(consumed)));
+        }
+        // the one synchronous call: Web → Orders (POST /api/orders)
+        edges.Add(new Edge(Web, Orders, recent.Any(r => r.Kind == "StateSnapshot" && r.Service == "Orders"), "command"));
+        return edges;
+    }
+
+    private static string KindOf(List<EventAudit> records)
+    {
+        if (records.Any(r => r.Kind is "ConsumerFailed")) return "failure";
+        var types = records.Select(r => r.SubjectMessageType ?? "").ToList();
+        if (types.Any(t => t is "ReleaseStock" or "CancelPayment" or "StockReleased" or "PaymentFailed" or "PaymentCancelled" or "OrderRejected")) return "comp";
+        if (types.Any(t => t is "ReserveStock" or "ChargeWallet")) return "command";
+        return "event";
+    }
+}

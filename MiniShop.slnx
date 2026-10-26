@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MiniShop.Orders/MiniShop.Orders.csproj" />
+    <Project Path="src/MiniShop.Inventory/MiniShop.Inventory.csproj" />
+    <Project Path="src/MiniShop.Payments/MiniShop.Payments.csproj" />
+    <Project Path="src/MiniShop.Web/MiniShop.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MiniShop.Orders.Tests/MiniShop.Orders.Tests.csproj" />
+    <Project Path="tests/MiniShop.Inventory.Tests/MiniShop.Inventory.Tests.csproj" />
+    <Project Path="tests/MiniShop.Payments.Tests/MiniShop.Payments.Tests.csproj" />
+    <Project Path="tests/MiniShop.E2E/MiniShop.E2E.csproj" />
+  </Folder>
+  <Folder Name="/solution-items/">
+    <File Path="README.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="infra/compose.yaml" />
+  </Folder>
+</Solution>

@@ -1,0 +1,58 @@
+@inject ServiceClients Clients
+@inject ReadModelQueries Queries
+@inject ServiceHealthMonitor Health
+@inject ReadModelRebuilder Rebuilder
+@using System.Text.Json.Nodes
+
+@*
+    CQRS Explorer: write state (owner database, via diagnostics) next to read state (readmodel.db),
+    the projection lag, and the Rebuild button that replays EventAudit.
+*@
+<div class="panel">
+    <h3>CQRS: write side vs read side</h3>
+    <div class="cards">
+        <div class="stat"><span>events applied</span><b>@_lag.AppliedCount</b></div>
+        <div class="stat"><span>last projection lag</span><b>@($"{_lag.LastLagMs:0} ms")</b></div>
+        <div class="stat"><span>web queue backlog</span><b>@_lag.QueueBacklog</b></div>
+        <div class="stat"><span>last event occurred</span><b class="small">@(_lag.LastEventOccurredAtUtc is null ? "—" : Fmt.Time(_lag.LastEventOccurredAtUtc.Value))</b></div>
+    </div>
+    @if (OrderId is not null)
+    {
+        <table class="table compact">
+            <thead><tr><th></th><th>WRITE side (orders.db)</th><th>READ side (readmodel.db)</th></tr></thead>
+            <tbody>
+                <tr><td>order state</td><td><span class="@Fmt.StateClass(_writeState)">@(_writeState ?? "—")</span></td><td><span class="@Fmt.StateClass(_readState)">@(_readState ?? "— (not projected yet)")</span></td></tr>
+                <tr><td>saga state</td><td>@(_writeSaga ?? "—")</td><td class="muted">n/a (the read model only knows events)</td></tr>
+            </tbody>
+        </table>
+        @if (_writeState != _readState) { <p class="hint">The two sides differ right now: that is eventual consistency. The read side will converge as soon as the pending events are projected.</p> }
+        else { <p class="muted small">Both sides agree.</p> }
+    }
+    <p>
+        <button class="btn small" @onclick="Rebuild">Reset &amp; rebuild read model from EventAudit</button>
+        <button class="btn small" @onclick="LoadAsync">refresh</button>
+        @if (_rebuilt is not null) { <span class="hint">replayed @_rebuilt audited events</span> }
+    </p>
+</div>
+
+@code {
+    [Parameter] public Guid? OrderId { get; set; }
+    private ProjectionLag _lag = new(0, null, null, 0, 0);
+    private string? _writeState, _writeSaga, _readState;
+    private int? _rebuilt;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    public async Task LoadAsync()
+    {
+        var backlog = Health.Queues.FirstOrDefault(q => q.Name == Topology.WebQueue)?.Backlog ?? 0;
+        _lag = await Queries.GetProjectionLagAsync(backlog);
+        if (OrderId is null) return;
+        var write = await Clients.DiagnosticsAsync(ServiceNames.Orders, $"orders/{OrderId}");
+        _writeState = write?["order"]?["state"]?.GetValue<string>();
+        _writeSaga = write?["saga"]?["currentState"]?.GetValue<string>();
+        _readState = (await Queries.GetOrderDetailsAsync(OrderId.Value))?.State;
+    }
+
+    private async Task Rebuild() { _rebuilt = await Rebuilder.RebuildAsync(CancellationToken.None); await LoadAsync(); }
+}
