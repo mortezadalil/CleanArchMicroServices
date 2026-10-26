@@ -107,9 +107,20 @@ public sealed class ScenarioRunner(IServiceScopeFactory scopes, IDbContextFactor
     private static async Task<bool> CheckTraceAsync(ScenarioContext ctx, ScenarioDefinition definition)
     {
         if (definition.ExpectedTrace.Count == 0 || ctx.OrderIds.Count == 0) return true;
-        await Task.Delay(1500, CancellationToken.None);          // let the last telemetry records land
-        var actual = Collapse(await ctx.Queries.GetActualTraceAsync(ctx.OrderIds[0]));
-        var ok = IsSubsequence(definition.ExpectedTrace, actual);
+
+        // Telemetry travels on its own queue and can lag behind the business state (e.g. right after a
+        // reset or a restart, when that queue is busy).  So keep reading the trace until the expected
+        // sequence is there, for at most 10 seconds; a genuine mismatch is still reported as FAILED.
+        List<string> actual = [];
+        var ok = false;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        do
+        {
+            await Task.Delay(500, CancellationToken.None);
+            actual = Collapse(await ctx.Queries.GetActualTraceAsync(ctx.OrderIds[0]));
+            ok = IsSubsequence(definition.ExpectedTrace, actual);
+        }
+        while (!ok && DateTime.UtcNow < deadline);
         await ctx.LogAsync($"expected trace: {string.Join(" → ", definition.ExpectedTrace)}");
         await ctx.LogAsync($"actual trace:   {string.Join(" → ", actual)}  → {(ok ? "match" : "MISMATCH")}");
         return ok;

@@ -1,16 +1,19 @@
 @inject IJSRuntime JS
 
 @*
-    Event Timeline: append-only records with real timestamps.  Click a row to see ids (with copy),
+    Event Timeline: append-only records with real timestamps.  Click a row to open its details in place (right under the row): ids (with copy),
     publisher/handler, attempt, duration, outcome, error and the payload / snapshot JSON.
 *@
 <div class="timeline">
     <table class="table compact">
-        <thead><tr><th>Time</th><th>Service</th><th>Kind</th><th>Subject</th><th>Detail</th><th>Att.</th></tr></thead>
+        <thead><tr><th></th><th>Time</th><th>Service</th><th>Kind</th><th>Subject</th><th>Detail</th><th>Att.</th></tr></thead>
         <tbody>
         @foreach (var e in Events)
         {
-            <tr class="@(Selected?.Seq == e.Seq ? "selected" : "") @(e.Outcome == "Failed" ? "failed" : "")" @onclick="() => Select(e)">
+            var isOpen = Selected?.Seq == e.Seq;
+            <tr @key="e.Seq" class="@(isOpen ? "selected" : "") @(e.Outcome == "Failed" ? "failed" : "")" @onclick="() => Select(e)"
+                title="@(isOpen ? "click to close" : "click to open the details")">
+                <td class="chevron">@(isOpen ? "▾" : "▸")</td>
                 <td class="mono">@Fmt.Time(e.OccurredAtUtc)</td>
                 <td>@e.Service</td>
                 <td><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span></td>
@@ -18,35 +21,18 @@
                 <td class="detail">@e.Detail</td>
                 <td>@(e.Attempt > 0 ? e.Attempt.ToString() : "")</td>
             </tr>
+            @* The details open IN PLACE, as an extra row right under the clicked row. *@
+            @if (isOpen)
+            {
+                <tr @key="-e.Seq" class="detail-row">   @* negative Seq: a key that never collides with a data row *@
+                    <td colspan="7">@Details(e)</td>
+                </tr>
+            }
         }
         </tbody>
     </table>
     @if (Events.Count == 0) { <p class="muted">No records for this filter yet.</p> }
 </div>
-
-@if (Selected is not null)
-{
-    <div class="detail-panel">
-        <h4>@Selected.Kind <small class="muted">#@Selected.Seq · @Selected.Category</small></h4>
-        <dl>
-            <dt>messageId</dt><dd class="mono">@Selected.MessageId <button class="ghost" @onclick="() => Copy(Selected.MessageId.ToString())">copy</button></dd>
-            <dt>correlationId (order)</dt><dd class="mono">@Selected.CorrelationId <button class="ghost" @onclick="() => Copy(Selected.CorrelationId.ToString())">copy</button> <a href="/orders/@Selected.CorrelationId">open order</a></dd>
-            <dt>causationId</dt><dd class="mono">@(Selected.CausationId?.ToString() ?? "—")</dd>
-            <dt>subject</dt><dd class="mono">@Selected.SubjectMessageType @Selected.SubjectMessageId</dd>
-            <dt>scenarioId</dt><dd class="mono">@(Selected.ScenarioId?.ToString() ?? "—")</dd>
-            <dt>producer / handler</dt><dd>@Selected.Service</dd>
-            <dt>attempt · duration · outcome</dt><dd>@Selected.Attempt · @(Selected.DurationMs is null ? "—" : $"{Selected.DurationMs:0} ms") · @(Selected.Outcome ?? "—")</dd>
-            @if (Selected.Error is not null) { <dt>error</dt><dd class="error">@Selected.Error</dd> }
-            <dt>occurred / recorded</dt><dd>@Fmt.Time(Selected.OccurredAtUtc) / @Fmt.Time(Selected.RecordedAtUtc)</dd>
-        </dl>
-        @if (Selected.Kind is "ConsumerFailed" or "MessageDeadLettered" or "RetryScheduled" or "FaultInjected")
-        {
-            <p class="hint"><b>Why &amp; expected action:</b> @Explain(Selected)</p>
-        }
-        @if (Selected.PayloadJson is not null) { <details open><summary>payload</summary><pre>@Pretty(Selected.PayloadJson)</pre></details> }
-        @if (Selected.SnapshotJson is not null) { <details open><summary>state snapshot after this step</summary><pre>@Pretty(Selected.SnapshotJson)</pre></details> }
-    </div>
-}
 
 @code {
     [Parameter] public IReadOnlyList<EventAudit> Events { get; set; } = [];
@@ -58,6 +44,31 @@
         Selected = Selected?.Seq == e.Seq ? null : e;
         await SelectedChanged.InvokeAsync(Selected);
     }
+
+    /// <summary>The detail panel of one record (ids with copy, attempt, error, payload, snapshot).</summary>
+    private RenderFragment Details(EventAudit e) => __builder =>
+    {
+        <div class="detail-panel inline">
+            <h4>@e.Kind <small class="muted">#@e.Seq · @e.Category</small></h4>
+            <dl>
+                <dt>messageId</dt><dd class="mono">@e.MessageId <button class="ghost" @onclick="() => Copy(e.MessageId.ToString())">copy</button></dd>
+                <dt>correlationId (order)</dt><dd class="mono">@e.CorrelationId <button class="ghost" @onclick="() => Copy(e.CorrelationId.ToString())">copy</button> <a href="/orders/@e.CorrelationId">open order</a></dd>
+                <dt>causationId</dt><dd class="mono">@(e.CausationId?.ToString() ?? "—")</dd>
+                <dt>subject</dt><dd class="mono">@e.SubjectMessageType @e.SubjectMessageId</dd>
+                <dt>scenarioId</dt><dd class="mono">@(e.ScenarioId?.ToString() ?? "—")</dd>
+                <dt>producer / handler</dt><dd>@e.Service</dd>
+                <dt>attempt · duration · outcome</dt><dd>@e.Attempt · @(e.DurationMs is null ? "—" : $"{e.DurationMs:0} ms") · @(e.Outcome ?? "—")</dd>
+                @if (e.Error is not null) { <dt>error</dt><dd class="error">@e.Error</dd> }
+                <dt>occurred / recorded</dt><dd>@Fmt.Time(e.OccurredAtUtc) / @Fmt.Time(e.RecordedAtUtc)</dd>
+            </dl>
+            @if (e.Kind is "ConsumerFailed" or "MessageDeadLettered" or "RetryScheduled" or "FaultInjected")
+            {
+                <p class="hint"><b>Why &amp; expected action:</b> @Explain(e)</p>
+            }
+            @if (e.PayloadJson is not null) { <details open><summary>payload</summary><pre>@Pretty(e.PayloadJson)</pre></details> }
+            @if (e.SnapshotJson is not null) { <details open><summary>state snapshot after this step</summary><pre>@Pretty(e.SnapshotJson)</pre></details> }
+        </div>
+    };
 
     private async Task Copy(string text) => await JS.InvokeVoidAsync("miniShop.copy", text);
 
