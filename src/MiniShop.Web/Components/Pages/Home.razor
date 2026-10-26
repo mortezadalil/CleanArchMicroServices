@@ -18,7 +18,8 @@
 
 @if (_products.Count == 0)
 {
-    <p class="muted">Waiting for the catalog… (Inventory publishes <code>ProductCatalogChanged</code>; the Web projects it.)</p>
+    <p class="muted">Waiting for the catalog… The Web has asked Inventory for a snapshot (<code>ReadModelSnapshotRequested</code> → <code>ProductCatalogChanged</code>).
+        If this stays empty, open <a href="/developer">Developer Mode</a> and check that Inventory and RabbitMQ are healthy.</p>
 }
 else
 {

@@ -30,7 +30,8 @@ builder.Services.AddDbContextFactory<ReadModelDbContext>((sp, options) => option
     .UseSqlite($"Data Source={dbPath}")
     .AddInterceptors(sp.GetRequiredService<FaultingSaveChangesInterceptor>()));
 
-// --- messaging: the Web only SUBSCRIBES (business events + diagnostics) -----------------------------
+// --- messaging: the Web SUBSCRIBES to business events + diagnostics; its only publication is ---------
+// --- ReadModelSnapshotRequested (see ReadModelBootstrapper) ---------------------------------------------
 Type[] ProjectionConsumers =
 [
     typeof(ProductCatalogChangedProjection), typeof(WalletBalanceChangedProjection), typeof(OrderPlacedProjection),
@@ -65,6 +66,7 @@ builder.Services.AddMassTransit(x =>
 
 builder.Services.AddScoped<Projector>();
 builder.Services.AddScoped<ReadModelRebuilder>();
+builder.Services.AddHostedService<ReadModelBootstrapper>();   // asks the owners for a snapshot while the read model is empty
 builder.Services.AddScoped<ReadModelQueries>();
 builder.Services.AddScoped<CartService>();
 builder.Services.AddSingleton<UiNotifier>();

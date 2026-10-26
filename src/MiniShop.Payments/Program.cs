@@ -25,6 +25,7 @@ builder.Services.AddMassTransit(x =>
 {
     x.AddConsumer<ChargeWalletConsumer>();
     x.AddConsumer<CancelPaymentConsumer>();
+    x.AddConsumer<SnapshotRequestedConsumer>();   // a late subscriber asks for the wallets again
 
     x.UsingRabbitMq((context, cfg) =>
     {

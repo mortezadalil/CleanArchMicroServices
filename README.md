@@ -138,6 +138,15 @@ RabbitMQ topology (MassTransit conventions): queues `minishop.orders`, `minishop
   `ChargeWallet` can never debit (→ release stock). Inventory uses the same tombstone idea for a late
   `ReserveStock`.
 
+### Late subscribers: why the Web asks for a snapshot
+
+RabbitMQ delivers an event only to queues that exist **when it is published**. On a first
+`docker compose up`, Inventory and Payments announce the catalog and the wallets before the Web has
+created its queue, so those events are dropped by the broker. The broker is not an event store.
+`ReadModelBootstrapper` in the Web therefore publishes `ReadModelSnapshotRequested` every 5 seconds while
+its product cards or wallets are empty; the owners answer by re-publishing `ProductCatalogChanged` /
+`WalletBalanceChanged` through their outbox. Projections are idempotent, so extra answers are harmless.
+
 ### CQRS
 
 The Web never opens another service's database. It subscribes to events, appends each one to
@@ -261,7 +270,7 @@ MINISHOP_E2E_INCLUDE_S04=1 dotnet test tests/MiniShop.E2E                # when 
 
 | Symptom                                               | Check                                                                 |
 |-------------------------------------------------------|-----------------------------------------------------------------------|
-| Store shows "Waiting for the catalog…"                | Inventory not up or not connected to RabbitMQ (`/health/ready`, management UI → `minishop.web` consumers) |
+| Store shows "Waiting for the catalog…"                | The Web asks Inventory/Payments for a snapshot every 5 s until it gets one (see below). If it never fills, Inventory or RabbitMQ is not healthy (`/health/ready`, management UI → `minishop.web` consumers) |
 | Order stays `Pending`                                 | Outbox/Inbox tab → pending rows in Orders? RabbitMQ down? Saga Inspector → deadline will fire a timeout |
 | Everything `RequiresAttention`                        | a `FailReleaseStock` rule is still active → Faults tab → Clear all, then *retry compensation* |
 | `database is locked`                                  | two processes opened the same SQLite file — each service must use its own `Database__Path` |

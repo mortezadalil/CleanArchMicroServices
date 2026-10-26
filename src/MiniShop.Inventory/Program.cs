@@ -27,6 +27,7 @@ builder.Services.AddMassTransit(x =>
     x.AddConsumer<ReserveStockConsumer>();
     x.AddConsumer<ReleaseStockConsumer>();
     x.AddConsumer<OrderConfirmedConsumer>();
+    x.AddConsumer<SnapshotRequestedConsumer>();   // a late subscriber asks for the catalog again
 
     x.UsingRabbitMq((context, cfg) =>
     {

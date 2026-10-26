@@ -53,3 +53,15 @@ public sealed record StockLevel(Guid ProductId, string Name, int OnHand, int Res
 {
     public int Available => OnHand - Reserved;
 }
+
+/// <summary>
+/// Web → everyone: "my read model is empty or incomplete, please re-announce your reference data".
+///
+/// Why it exists: RabbitMQ only delivers an event to queues that are bound at the moment of publishing.
+/// On a first start, Inventory and Payments may publish ProductCatalogChanged / WalletBalanceChanged
+/// before the Web has created its queue, and those events are simply dropped.  The broker is not an
+/// event store, so a late subscriber must ask the owners for a snapshot.  Inventory answers with one
+/// ProductCatalogChanged per product, Payments with one WalletBalanceChanged per wallet; the projections
+/// are idempotent, so answering more than once is harmless.
+/// </summary>
+public sealed record ReadModelSnapshotRequested(string RequestedBy, string Reason) : Message;

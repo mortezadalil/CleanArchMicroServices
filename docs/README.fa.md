@@ -44,6 +44,14 @@ docker compose -f infra/compose.yaml up --build
 `PaymentAlreadyCompleted` برمی‌گرداند (سفارش تأیید می‌شود) یا یک tombstone در دفتر کل ثبت می‌کند تا
 برداشت دیرهنگام هرگز ممکن نشود و بعد موجودی آزاد می‌شود.
 
+## چرا Web درخواست snapshot می‌دهد؟
+
+RabbitMQ هر event را فقط به صف‌هایی می‌رساند که **در لحظهٔ انتشار** وجود دارند. در اولین اجرای Compose،
+Inventory و Payments کاتالوگ و کیف پول‌ها را قبل از ساخته‌شدن صف Web منتشر می‌کنند و broker آن‌ها را دور
+می‌ریزد (broker انبار رویداد نیست). به همین دلیل `ReadModelBootstrapper` در Web تا وقتی read model خالی است
+هر ۵ ثانیه رویداد `ReadModelSnapshotRequested` منتشر می‌کند و سرویس‌های مالک داده‌ها را از طریق Outbox دوباره
+اعلام می‌کنند. projectionها idempotent هستند، پس پاسخ تکراری بی‌ضرر است.
+
 ## سناریوها (S01 تا S16)
 
 از منوی بالای Developer Mode یک سناریو انتخاب و **Run** را بزنید. هر سناریو خودش کیف پول و خطای
