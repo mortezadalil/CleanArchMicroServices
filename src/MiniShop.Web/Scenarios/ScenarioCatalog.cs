@@ -32,6 +32,7 @@
 using MiniShop.Contracts;
 using MiniShop.Contracts.Diagnostics;
 using MiniShop.Shared.Faults;
+using MiniShop.Web.Services;   // QueueInfo: queue counters read from the RabbitMQ management API (S05)
 
 namespace MiniShop.Web.Scenarios;
 
@@ -267,7 +268,18 @@ public static class ScenarioCatalog
         await ctx.AssertAsync("order still waiting while the consumer is paused", await ctx.OrderStateAsync(orderId) == "AwaitingPayment",
             $"orders.db state = {await ctx.OrderStateAsync(orderId)}");
         // ...and the message is visible in RabbitMQ (ready or unacked) on the payments queue.
-        var queue = ctx.Health.Queues.FirstOrDefault(q => q.Name == Topology.PaymentsQueue);
+        // We ask the RabbitMQ management API directly (not the health monitor's cached copy) and keep asking
+        // for up to 15 s, because the management API refreshes its queue statistics only every few seconds:
+        // right after the message arrives the counters can still say 0 although the message is held.
+        QueueInfo? queue = null;
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        do
+        {
+            queue = (await ctx.Clients.QueuesAsync(ctx.Ct)).FirstOrDefault(q => q.Name == Topology.PaymentsQueue);
+            if (queue is { Backlog: >= 1 }) break;
+            await Task.Delay(1000, ctx.Ct);
+        }
+        while (DateTime.UtcNow < deadline);
         await ctx.AssertAsync("ChargeWallet sits in the payments queue (backlog)", queue is { Backlog: >= 1 },
             $"RabbitMQ {Topology.PaymentsQueue}: ready={queue?.Ready}, unacked={queue?.Unacked}");
 
