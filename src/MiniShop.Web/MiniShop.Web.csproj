@@ -1,18 +1,51 @@
+<!--
+  FILE: src/MiniShop.Web/MiniShop.Web.csproj
+
+  WHAT IT IS
+    The project file of MiniShop.Web: the storefront + Developer Console, and the CQRS READ side
+    of MiniShop (it owns readmodel.db and fills it from events received over RabbitMQ).
+
+  WHERE IT SITS
+    One of four deployable services (Orders, Inventory, Payments, Web).  Each one is its own
+    process, its own Docker image and its own database.
+
+  WHAT YOU WILL NOT FIND HERE
+    - TargetFramework, Nullable, ImplicitUsings...: they come from Directory.Build.props at the
+      repository root, so every project in the solution uses the same settings.
+    - Package VERSIONS: they come from Directory.Packages.props (Central Package Management), so
+      all services use the same MassTransit / EF Core versions.
+
+  Read next: Program.cs (how everything referenced here is wired together).
+-->
+<!-- Sdk.Web = an ASP.NET Core app (Kestrel, Blazor, minimal APIs, appsettings.json, wwwroot). -->
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
+    <!-- Namespaces of files in this project start with MiniShop.Web (e.g. MiniShop.Web.Projections). -->
     <RootNamespace>MiniShop.Web</RootNamespace>
   </PropertyGroup>
 
+  <!--
+    Linked source instead of a shared class library: the message contracts (contracts/) and the
+    building blocks (Inbox, Outbox, IdempotentConsumer, diagnostics, fault injection in shared/) are
+    COMPILED INTO each service.  Every service therefore carries its own copy of the code and can be
+    built and deployed alone (the Dockerfile copies these folders).  LinkBase only decides under which
+    folder the files appear in the IDE's Solution Explorer.
+  -->
   <ItemGroup>
     <Compile Include="../../contracts/**/*.cs" LinkBase="Contracts" />
     <Compile Include="../../shared/**/*.cs" LinkBase="Shared" />
   </ItemGroup>
 
+  <!-- NuGet packages.  No Version attribute: versions are pinned centrally in Directory.Packages.props. -->
   <ItemGroup>
+    <!-- MassTransit + its RabbitMQ transport: consumers, receive endpoints, retries, publish. -->
     <PackageReference Include="MassTransit.RabbitMQ" />
+    <!-- EF Core with the SQLite provider: readmodel.db. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- Adds AddDbContextCheck: /health/ready reports whether readmodel.db can be opened. -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <!-- IHttpClientFactory / typed clients, used by ServiceClients (POST /api/orders, control plane). -->
     <PackageReference Include="Microsoft.Extensions.Http" />
   </ItemGroup>
 

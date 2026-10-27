@@ -4,18 +4,40 @@
     These versions were verified to build together on .NET 10:
       - MassTransit 8.5.x is the last Apache-2.0 licensed line (9.x is commercial).
       - EF Core 10 with the SQLite provider.
+
+    HOW IT WORKS: Directory.Build.props sets ManagePackageVersionsCentrally=true. Each .csproj then writes
+    <PackageReference Include="MassTransit" /> with NO version, and NuGet takes the version from the matching
+    <PackageVersion> line below. Upgrading a library = editing one line here, for all services and tests at once.
+
+    Why exact versions (not ranges): every student, every CI run and every Docker image restores the very same
+    packages, so "it works on my machine" problems caused by a silently newer package cannot happen.
+
+    Read next: Directory.Build.props.
   -->
   <ItemGroup>
+    <!-- Messaging: MassTransit is the library that talks to RabbitMQ for us (publish/send, consumers, retries,
+         error queues). Kept on 8.5.x on purpose: it is open source (Apache-2.0); 9.x needs a commercial licence. -->
     <PackageVersion Include="MassTransit" Version="8.5.12" />
+    <!-- The RabbitMQ transport for MassTransit. Must always have the SAME version as MassTransit itself. -->
     <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.12" />
+    <!-- Persistence: EF Core 10 (ORM) and its SQLite provider. Each service has its own SQLite file
+         (database per service); Outbox, Inbox and saga state live in the same database as the business data,
+         which is what makes "business change + outbox row + inbox row" one local transaction. -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <!-- Design-time tools for EF Core (needed only if you add `dotnet ef migrations`; MiniShop creates its SQLite
+         schema at startup, so no project references it today - the version is pinned here for when one does). -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
+    <!-- Generic host (BackgroundService, DI, configuration, logging). ASP.NET Core projects already get it through
+         the Web SDK; the pin is here for any plain console/test project that wants to reference it. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
+    <!-- IHttpClientFactory: the Web calls the other services' HTTP APIs with it. -->
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.14" />
+    <!-- Health checks behind /health/ready, including the "can I reach my DbContext?" check. -->
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.14" />
     <!-- Tests -->
+    <!-- Test SDK + xUnit (test framework) + the runner that lets `dotnet test` and IDEs discover the tests. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.1" />

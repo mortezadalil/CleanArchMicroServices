@@ -1,16 +1,34 @@
+<!--
+  MiniShop.slnx - the solution file (new XML ".slnx" format, readable by humans, supported by the .NET 10 SDK,
+  Visual Studio and Rider). It only groups projects for the IDE and for `dotnet build MiniShop.slnx`;
+  it has no influence on how a single project compiles.
+
+  Notice what is NOT here: contracts/ and shared/. They are not projects. Every service compiles those
+  .cs files as linked source (<Compile Include="../../contracts/**/*.cs" />), so the solution has exactly
+  four deployable services and their tests.
+
+  Read next: Directory.Build.props.
+-->
 <Solution>
+  <!-- The four microservices. Each one is a separate process with its own SQLite database and RabbitMQ queue. -->
   <Folder Name="/src/">
+    <!-- Orders: order placement API + the Saga that orchestrates Inventory and Payments. -->
     <Project Path="src/MiniShop.Orders/MiniShop.Orders.csproj" />
+    <!-- Inventory: catalog and stock reservations. -->
     <Project Path="src/MiniShop.Inventory/MiniShop.Inventory.csproj" />
+    <!-- Payments: wallets and debits. -->
     <Project Path="src/MiniShop.Payments/MiniShop.Payments.csproj" />
+    <!-- Web: Blazor UI, CQRS read models, Scenario Lab and Developer Console. -->
     <Project Path="src/MiniShop.Web/MiniShop.Web.csproj" />
   </Folder>
+  <!-- Automated tests: one project per service (unit/integration) plus end-to-end scenario tests. -->
   <Folder Name="/tests/">
     <Project Path="tests/MiniShop.Orders.Tests/MiniShop.Orders.Tests.csproj" />
     <Project Path="tests/MiniShop.Inventory.Tests/MiniShop.Inventory.Tests.csproj" />
     <Project Path="tests/MiniShop.Payments.Tests/MiniShop.Payments.Tests.csproj" />
     <Project Path="tests/MiniShop.E2E/MiniShop.E2E.csproj" />
   </Folder>
+  <!-- Non-code files shown in the IDE's solution explorer for convenience (not compiled). -->
   <Folder Name="/solution-items/">
     <File Path="README.md" />
     <File Path="Directory.Build.props" />

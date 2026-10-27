@@ -1,10 +1,21 @@
+# .gitignore - files Git must never track.
+# Rule of thumb: anything GENERATED (build output, databases, test results) or PERSONAL (IDE settings)
+# stays out of the repository; only source code and configuration are committed.
+
+# Build output of every project (compiled .dll files, intermediate files). Recreated by `dotnet build`.
 bin/
 obj/
+# Per-user IDE settings (Visual Studio .csproj.user files).
 *.user
+# SQLite databases created at runtime by the services (orders.db, inventory.db, ...), plus SQLite's
+# shared-memory (-shm) and write-ahead-log (-wal) companion files. Each developer gets fresh, seeded data.
 *.db
 *.db-shm
 *.db-wal
+# IDE folders: Visual Studio and JetBrains Rider.
 .vs/
 .idea/
+# Runtime data folder (where the services keep their SQLite files when run via compose/scripts).
 data/
+# Output of `dotnet test` (result files, coverage).
 TestResults/

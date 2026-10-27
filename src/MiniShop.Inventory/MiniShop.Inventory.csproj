@@ -1,17 +1,50 @@
+<!--
+  FILE: src/MiniShop.Inventory/MiniShop.Inventory.csproj
+  Project file of the Inventory service (catalog, stock, reservations).
+
+  Sdk="Microsoft.NET.Sdk.Web": an ASP.NET Core app (Kestrel, minimal APIs, appsettings.json handling),
+  even though Inventory has no business HTTP API; we still need HTTP for health checks and the
+  Development-only control plane.
+
+  Settings that are the same for every project (target framework net10.0, nullable reference types,
+  implicit usings, central package management) live in ../../Directory.Build.props, so this file stays short.
+  Read next: Program.cs
+-->
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
+    <!-- Default namespace for new files (folders become sub-namespaces, e.g. MiniShop.Inventory.Consumers). -->
     <RootNamespace>MiniShop.Inventory</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      LINKED SOURCE instead of project references.
+      The message contracts (contracts/) and the shared building blocks (shared/: Outbox, Inbox,
+      IdempotentConsumer, fault injection, telemetry) are compiled directly INTO this assembly.
+      LinkBase only decides under which virtual folder the files appear in the IDE.
+
+      Why not a "MiniShop.Shared" class library (a fifth project)?
+        - In a production system this code would be published as a versioned NuGet package that every
+          service references.  Linked source gives the same result (each service gets its OWN compiled
+          copy) without setting up a package feed for a classroom demo.
+        - The solution keeps one project per deployable service (four), so its layout mirrors what is
+          actually deployed; there is no shared runtime component.
+        - Why not simply copy the files into every service?  The Outbox/Inbox/fault code is identical
+          everywhere, and a student should read ONE well-commented implementation, not four copies.
+      See shared/README.md.
+    -->
     <Compile Include="../../contracts/**/*.cs" LinkBase="Contracts" />
     <Compile Include="../../shared/**/*.cs" LinkBase="Shared" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Versions are NOT written here: they come from ../../Directory.Packages.props (central package management). -->
+    <!-- MassTransit + its RabbitMQ transport: consumers, receive endpoints, retries, error queues. -->
     <PackageReference Include="MassTransit.RabbitMQ" />
+    <!-- EF Core with the SQLite provider: inventory.db, owned by this service only. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- AddDbContextCheck: the /health/ready endpoint reports whether inventory.db can be opened. -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
   </ItemGroup>
 

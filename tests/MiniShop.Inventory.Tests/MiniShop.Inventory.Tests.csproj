@@ -1,15 +1,48 @@
+<!--
+  MiniShop.Inventory.Tests  -  INTEGRATION tests for the Inventory service's message consumers.
+
+  What lives here:
+    - ConsumerTestHost.cs : builds a tiny, self-contained "Inventory service" inside the test process:
+                            the REAL consumers + the REAL EF Core model on an in-memory SQLite database,
+                            connected to MassTransit's in-memory transport instead of RabbitMQ.
+    - ReservationTests.cs : the tests: Inbox de-duplication, business idempotency (one reservation per
+                            order), tombstones, the last-unit race, release and commit of stock.
+
+  Infrastructure needed: none (no RabbitMQ, no Docker, no files on disk).
+
+  Note: TargetFramework etc. come from Directory.Build.props, package versions from
+  Directory.Packages.props (Central Package Management), so PackageReference lines have no Version.
+
+  Read next: ConsumerTestHost.cs, then ReservationTests.cs
+-->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- A test project is never published as a NuGet package; this stops `dotnet pack` from trying. -->
     <IsPackable>false</IsPackable>
+    <!-- Tells the .NET SDK and `dotnet test` that this project contains tests to discover and run. -->
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The test platform host: lets `dotnet test` and IDEs build, discover and run the tests. -->
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- xUnit itself: [Fact], [Theory], Assert.* ... -->
     <PackageReference Include="xunit" />
+    <!-- The adapter that connects xUnit to the test platform (dotnet test, Visual Studio, Rider, VS Code). -->
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      MiniShop.Inventory is an ASP.NET Core project (Sdk="Microsoft.NET.Sdk.Web").  This test project
+      uses the plain Microsoft.NET.Sdk, which only brings the base .NET runtime.  Referencing the
+      Microsoft.AspNetCore.App shared framework makes the ASP.NET Core assemblies the service code needs
+      (hosting, logging, HTTP JSON options used by AddMiniShopBuildingBlocks ...) available here too.
+    -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!--
+      The code under test.  The ProjectReference also brings MassTransit (including
+      MassTransit.Testing, which ships inside the main MassTransit package), EF Core + SQLite, the shared
+      building blocks and the contracts transitively, so they are not listed again here.
+    -->
     <ProjectReference Include="../../src/MiniShop.Inventory/MiniShop.Inventory.csproj" />
   </ItemGroup>
 </Project>

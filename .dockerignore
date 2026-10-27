@@ -1,6 +1,15 @@
+# .dockerignore - files NOT sent to Docker as "build context" when building the service images.
+# A smaller context makes `docker build` faster, and leaving out local build output and databases makes
+# sure the image is built from source inside the container, not from whatever happens to be on the host.
+
+# Host build output: the Dockerfile runs its own `dotnet publish`; copying host bin/obj could mix
+# host-specific (e.g. Windows/macOS) artifacts into the Linux image.
 **/bin/
 **/obj/
+# Local SQLite databases and their -shm/-wal files: an image must start with an empty, freshly seeded database.
 **/*.db
 **/*.db-*
+# Git history: large and not needed to build.
 .git/
+# Runtime data folder.
 data/

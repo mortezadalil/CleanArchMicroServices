@@ -1,15 +1,49 @@
+<!--
+  MiniShop.Orders.Tests  -  UNIT + small INTEGRATION tests for the Orders service.
+
+  What lives here:
+    - OrderSagaTests.cs : unit tests of the order saga.  The saga is a pure function, so these tests
+                          need NO database, NO broker and NO clock.  They run in milliseconds.
+    - OutboxTests.cs    : a small integration test that writes outbox rows into a real (in-memory)
+                          SQLite database through the real OrdersDbContext and reads them back.
+
+  Infrastructure needed: none.  `dotnet test tests/MiniShop.Orders.Tests` works on a fresh clone.
+
+  Note: TargetFramework, Nullable, ImplicitUsings ... come from Directory.Build.props at the repo root,
+  and every package VERSION comes from Directory.Packages.props (Central Package Management).  That is
+  why the PackageReference lines below have no Version attribute.
+
+  Read next: OrderSagaTests.cs
+-->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- A test project is never published as a NuGet package; this stops `dotnet pack` from trying. -->
     <IsPackable>false</IsPackable>
+    <!-- Tells the .NET SDK and `dotnet test` that this project contains tests to discover and run. -->
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The test platform host: lets `dotnet test` and IDEs build, discover and run the tests. -->
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- xUnit itself: [Fact], [Theory], [InlineData], Assert.* ... -->
     <PackageReference Include="xunit" />
+    <!-- The adapter that connects xUnit to the test platform (dotnet test, Visual Studio, Rider, VS Code). -->
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      MiniShop.Orders is an ASP.NET Core project (Sdk="Microsoft.NET.Sdk.Web"), so its code uses types
+      from the ASP.NET Core shared framework (minimal APIs, hosting, HTTP JSON options ...).  This test
+      project uses the plain Microsoft.NET.Sdk, which only brings the base .NET runtime.  Referencing the
+      Microsoft.AspNetCore.App framework makes those ASP.NET Core assemblies available here too, so the
+      referenced service code compiles and loads inside the test process.
+    -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!--
+      The code under test.  A ProjectReference also brings the service's own packages along
+      transitively (EF Core + SQLite, MassTransit, the shared building blocks and the contracts),
+      which is why this file does not list them again.
+    -->
     <ProjectReference Include="../../src/MiniShop.Orders/MiniShop.Orders.csproj" />
   </ItemGroup>
 </Project>

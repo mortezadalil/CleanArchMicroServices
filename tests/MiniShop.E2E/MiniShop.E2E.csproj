@@ -1,11 +1,39 @@
+<!--
+  MiniShop.E2E  -  END-TO-END tests: the top of the test pyramid.
+
+  What lives here:
+    - ScenarioE2ETests.cs : talks HTTP to a RUNNING MiniShop stack (Web + Orders + Inventory + Payments
+                            + RabbitMQ), asks the Web to run every Scenario Lab scenario (S01..S16) and
+                            asserts that each one ends as PASSED.
+
+  Infrastructure needed: a running stack (docker compose, or every service started with `dotnet run`).
+  Without it these tests FAIL (connection refused) - that is expected.  This is why the README runs the
+  fast tests with a filter that excludes MiniShop.E2E (see "5. Tests" in README.md; the exact command is
+  not copied here because XML comments may not contain two dashes in a row) and runs this project
+  separately.
+
+  Notice what is MISSING compared to the other test projects: there is no ProjectReference and no
+  FrameworkReference.  An end-to-end test must treat the system as a black box and only use its public
+  HTTP API, exactly like a real client would.  Plain HttpClient + System.Text.Json (both part of the
+  base .NET runtime) are all it needs.
+
+  Note: package versions come from Directory.Packages.props (Central Package Management).
+
+  Read next: ScenarioE2ETests.cs
+-->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- A test project is never published as a NuGet package; this stops `dotnet pack` from trying. -->
     <IsPackable>false</IsPackable>
+    <!-- Tells the .NET SDK and `dotnet test` that this project contains tests to discover and run. -->
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The test platform host: lets `dotnet test` and IDEs build, discover and run the tests. -->
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- xUnit itself: [Fact], [Theory], [MemberData], Assert.* ... -->
     <PackageReference Include="xunit" />
+    <!-- The adapter that connects xUnit to the test platform (dotnet test, Visual Studio, Rider, VS Code). -->
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 </Project>

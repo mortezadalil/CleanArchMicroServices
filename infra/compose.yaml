@@ -1,51 +1,102 @@
-# MiniShop — everything needed for the classroom demo.
+# ==================================================================================================
+# infra/compose.yaml - MiniShop — everything needed for the classroom demo.
+#
+# WHAT THIS FILE IS
+#   A Docker Compose file: it describes all containers of MiniShop, how they are built, which ports they
+#   expose, which volumes they use and in which order they start. One command brings up the whole system.
 #
 #   docker compose -f infra/compose.yaml up --build          # full stack (http://localhost:5100)
 #   docker compose -f infra/compose.yaml up rabbitmq         # broker only, run the 4 projects with `dotnet run`
 #   docker compose -f infra/compose.yaml --profile faults up # + the optional runner for S04 (stops/starts the broker)
 #
+# ARCHITECTURE IN ONE PICTURE
+#   browser ──▶ web (5100) ──HTTP──▶ orders (5101)
+#                  ▲                    │  outbox → RabbitMQ
+#                  │ events             ▼
+#               rabbitmq (5672 / UI 15672) ◀──▶ inventory (5102), payments (5103)
+#
 # Every service has its own SQLite file in its own volume: no shared database.
+# ("Database per service": services share data only through messages, never through tables.)
+#
+# Read next: src/MiniShop.Orders/Dockerfile (how a service image is built), infra/runner/runner.py.
+# ==================================================================================================
+
+# Project name: prefixes networks/volumes (e.g. minishop_orders-data) and groups the containers.
 name: minishop
 
+# ---- shared settings for the four .NET services ----------------------------------------------------
+# Top-level keys starting with "x-" are "extension fields": Compose ignores them, but YAML lets us give
+# them an ANCHOR (&service) and reuse them later with an ALIAS (<<: *service). This avoids copy-pasting
+# the same restart policy, environment and depends_on four times.
 x-service: &service
+  # Restart a container whenever it exits, unless a human stopped it with `docker compose stop`.
   restart: unless-stopped            # S09: Orders exits on purpose and Docker brings it back
+  # Environment variables common to every service. Anchored separately (&service-env) because each
+  # service MERGES it with its own extra variables (a mapping-level merge, see "<<: *service-env" below).
+  # "__" (double underscore) in a variable name means ":" in .NET configuration (RabbitMq__Host = RabbitMq:Host).
   environment: &service-env
     ASPNETCORE_ENVIRONMENT: Development          # enables the Development-only demo control plane
+    # Inside the compose network, containers reach each other by service name: "rabbitmq", not localhost.
     RabbitMq__Host: rabbitmq
+    # Explicitly enable /demo and /diagnostics (also set by appsettings.Development.json).
     Demo__Enabled: "true"
+    # Shared secret for the X-Demo-Token header. Local classroom value only.
     Demo__Token: minishop-dev
+  # Do not start a service until RabbitMQ's healthcheck passes. Plain depends_on only waits for the
+  # container to START, which is too early: the broker needs a few seconds before it accepts connections.
   depends_on:
     rabbitmq:
       condition: service_healthy
 
 services:
+  # ---- the message broker -------------------------------------------------------------------------
   rabbitmq:
+    # Official image with the management plugin (web UI) enabled. Major version 4.
     image: rabbitmq:4-management
+    # Fixed container name, so the runner's allowlist and scripts can address it ("docker stop minishop-rabbitmq").
     container_name: minishop-rabbitmq
+    # "host:container". Published so `dotnet run` services on the host and the browser can reach it.
     ports:
       - "5672:5672"      # AMQP
       - "15672:15672"    # Management UI (guest / guest)
+    # How Docker decides the broker is "healthy" (used by the depends_on conditions above).
     healthcheck:
+      # rabbitmq-diagnostics ping succeeds once the node is up and answering.
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # Check every 5 s, give each check 5 s, and allow 12 failures (~1 minute) during startup.
       interval: 5s
       timeout: 5s
       retries: 12
+    # No volume on purpose: queues are rebuilt on start. Durable business state lives in the outbox rows
+    # of each service's database (S04: messages wait in the outbox while the broker is down).
 
+  # ---- Orders: Create Order API + saga orchestrator -----------------------------------------------
   orders:
+    # Inherit restart policy, common environment and depends_on from the x-service anchor.
     <<: *service
+    # Build from the repository root (".." relative to this file) because the Dockerfile copies
+    # contracts/ and shared/ as linked source. "dockerfile" is relative to that context.
     build: { context: .., dockerfile: src/MiniShop.Orders/Dockerfile }
+    # Fixed name: the runner and the Web's S09 crash flow refer to "minishop-orders".
     container_name: minishop-orders
     environment:
+      # Merge the shared variables, then add this service's own.
       <<: *service-env
+      # Put orders.db on the volume mounted at /data, so it survives container restarts (S09).
       Database__Path: /data/orders.db
+    # One named volume per database. Orders' data can never be seen by another container.
     volumes: [ "orders-data:/data" ]
+    # Host port 5101 → container port 8080 (Kestrel inside listens on 8080, see the Dockerfile).
     ports: [ "5101:8080" ]
+    # Liveness check via HTTP. Anchored (&http-health) so the other services reuse it with *http-health.
+    # curl is installed in the image for exactly this purpose. -f = fail on HTTP errors, -sS = quiet but show errors.
     healthcheck: &http-health
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/live"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # ---- Inventory: stock reservations (owns inventory.db) ------------------------------------------
   inventory:
     <<: *service
     build: { context: .., dockerfile: src/MiniShop.Inventory/Dockerfile }
@@ -55,8 +106,10 @@ services:
       Database__Path: /data/inventory.db
     volumes: [ "inventory-data:/data" ]
     ports: [ "5102:8080" ]
+    # Same HTTP healthcheck as orders (YAML alias).
     healthcheck: *http-health
 
+  # ---- Payments: customer wallets (owns payments.db) ----------------------------------------------
   payments:
     <<: *service
     build: { context: .., dockerfile: src/MiniShop.Payments/Dockerfile }
@@ -68,22 +121,31 @@ services:
     ports: [ "5103:8080" ]
     healthcheck: *http-health
 
+  # ---- Web: storefront, read model (CQRS query side), developer console, Scenario Lab --------------
   web:
     <<: *service
     build: { context: .., dockerfile: src/MiniShop.Web/Dockerfile }
     container_name: minishop-web
     environment:
       <<: *service-env
+      # The Web's own read model (projections of events), separate from every service's write database.
       Database__Path: /data/readmodel.db
+      # Server-side URLs the Web uses to call the other services (compose service names + internal port).
       Services__Orders: http://orders:8080
       Services__Inventory: http://inventory:8080
       Services__Payments: http://payments:8080
+      # For the console's queue view (RabbitMQ management HTTP API).
       Services__RabbitMqManagement: http://rabbitmq:15672
       Services__Runner: http://runner:9000      # used only when the 'faults' profile is up
+      # "Crash" = S09 calls Orders' /demo/crash and Docker restarts the container (restart: unless-stopped).
+      # Without Docker the default is "Bus", which uses /demo/restart-bus instead.
       Services__OrdersRestartMode: Crash        # S09: real container restart
     volumes: [ "web-data:/data" ]
+    # The only port students need to open in the browser: http://localhost:5100.
     ports: [ "5100:8080" ]
     healthcheck: *http-health
+    # Overrides the depends_on from x-service (a merge key does not deep-merge, so rabbitmq is repeated).
+    # The domain services only need to be STARTED: the Web shows "down" for a service that is not ready yet.
     depends_on:
       rabbitmq: { condition: service_healthy }
       orders: { condition: service_started }
@@ -93,15 +155,24 @@ services:
   # Optional local runner for infrastructure faults (S04 "RabbitMQ outage").
   # It is the ONLY component that touches the Docker socket, it accepts a fixed allowlist of
   # actions/containers, and it is never exposed to the browser.  Start with: --profile faults
+  # Why so careful? Access to /var/run/docker.sock is effectively root on the host machine. Keeping it
+  # in one tiny, optional, allow-listed container (instead of giving it to the Web) limits the damage.
   runner:
+    # Built from infra/runner/Dockerfile (path relative to this file).
     build: ./runner
     container_name: minishop-runner
+    # Only started when the "faults" profile is requested; a plain `up` ignores this service.
     profiles: [ "faults" ]
+    # Mount the host's Docker socket so the docker CLI inside can stop/start sibling containers.
     volumes: [ "/var/run/docker.sock:/var/run/docker.sock" ]
     environment:
+      # The ONLY containers the runner will act on (checked in runner.py).
       ALLOWED_CONTAINERS: minishop-rabbitmq,minishop-orders,minishop-inventory,minishop-payments
+    # No "ports": reachable only inside the compose network (http://runner:9000 from the Web).
     restart: unless-stopped
 
+# Named volumes (managed by Docker). One per database, so each service owns its storage. They survive
+# `docker compose down`; add `-v` to delete them and start from fresh seed data.
 volumes:
   orders-data:
   inventory-data:

@@ -2,14 +2,36 @@
   <!--
     Shared build settings for every project in the solution.
     Keeping them here means each .csproj stays small and students can focus on the domain code.
+
+    HOW IT WORKS: MSBuild automatically imports a file named "Directory.Build.props" from the project's
+    folder or any parent folder, BEFORE the .csproj content.  Because this file sits at the repository root,
+    every project under src/ and tests/ gets these properties without a single line in its own .csproj.
+    A .csproj can still override a value if it really needs to.
+
+    Read next: Directory.Packages.props (package versions), then src/MiniShop.Orders/MiniShop.Orders.csproj
+    (a typical project file, including how contracts/ and shared/ are linked as source).
   -->
   <PropertyGroup>
+    <!-- Target .NET 10 (the SDK version itself is pinned in global.json). -->
     <TargetFramework>net10.0</TargetFramework>
+    <!-- C# 14, the language version that ships with .NET 10. Pinned explicitly so the code compiles the same
+         everywhere, regardless of which newer SDK a student has installed. -->
     <LangVersion>14</LangVersion>
+    <!-- Nullable reference types: the compiler warns when a value that may be null (string?, Guid?) is used as if
+         it could not be. This is why the code is full of `?` annotations and `is not null` checks. -->
     <Nullable>enable</Nullable>
+    <!-- Implicit usings: common namespaces (System, System.Linq, System.Threading.Tasks, System.Collections.Generic...)
+         are imported automatically, so files only list the "interesting" usings (MassTransit, EF Core...). -->
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Warnings stay warnings. A teaching project should build even while a student experiments;
+         a production pipeline would usually set this to true. -->
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Central Package Management: projects reference packages WITHOUT a version
+         (<PackageReference Include="MassTransit" />); the version comes from Directory.Packages.props.
+         One place to upgrade, and no service can accidentally run a different MassTransit than another. -->
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Invariant globalization: the app does not load ICU culture data. Number/date formatting is the same on every
+         machine and in the small Linux containers (no "1,5" vs "1.5" surprises), and images can skip the ICU library. -->
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 </Project>

@@ -1,19 +1,49 @@
+<!--
+  ==================================================================================================
+  MiniShop.Orders.csproj - the project file of the Orders service.
+
+  WHAT THIS FILE IS
+    Tells the .NET SDK how to build this service: which SDK, which source files and which NuGet packages.
+    Common settings (TargetFramework net10.0, Nullable, ImplicitUsings, ...) are NOT repeated here: they
+    come from Directory.Build.props at the repository root, and package VERSIONS come from
+    Directory.Packages.props ("central package management"). That keeps this file small.
+
+  WHERE IT SITS IN THE ARCHITECTURE
+    One of four service projects (Orders, Inventory, Payments, Web). Each builds into its own process
+    and its own container image (see Dockerfile next to this file).
+
+  Read next: Program.cs.
+  ==================================================================================================
+-->
+<!-- "Microsoft.NET.Sdk.Web" = an ASP.NET Core app: Kestrel web server, minimal APIs, appsettings, etc. -->
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
+    <!-- Default namespace for new files; matches the folder-based namespaces like MiniShop.Orders.Saga. -->
     <RootNamespace>MiniShop.Orders</RootNamespace>
+    <!-- Id for "dotnet user-secrets" (local secrets outside the repo). Not needed by the demo, but standard. -->
     <UserSecretsId>minishop-orders</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Linked source: message contracts and shared building blocks (no project reference, no 5th project). -->
+    <!--
+      The .cs files of contracts/ and shared/ are compiled INTO this assembly (they appear under virtual
+      "Contracts" and "Shared" folders in the IDE). Every service gets an identical copy of the message
+      types, which is what lets them talk over RabbitMQ, without a shared library project to deploy.
+      This is also why the Dockerfile must copy contracts/ and shared/ (build context = repository root).
+    -->
     <Compile Include="../../contracts/**/*.cs" LinkBase="Contracts" />
     <Compile Include="../../shared/**/*.cs" LinkBase="Shared" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- No Version attributes here: versions are pinned centrally in Directory.Packages.props. -->
+    <!-- MassTransit + its RabbitMQ transport: consumers, publish/send, retries, error queues. -->
     <PackageReference Include="MassTransit.RabbitMQ" />
+    <!-- EF Core provider for SQLite: orders.db is a single file, no database server needed. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- AddDbContextCheck<T>(): the /health/ready endpoint checks that orders.db can be opened. -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
   </ItemGroup>
 
