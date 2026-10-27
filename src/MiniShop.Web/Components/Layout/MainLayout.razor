@@ -1,4 +1,32 @@
+@*
+    =================================================================================================
+     MainLayout.razor  —  the frame around every page: top bar, navigation, reset button, footer
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       The top bar (brand, Store / Cart / My Orders / Developer Mode links, "Reset data" button in
+       Development, light/dark toggle), an optional green/red banner after a reset, the current page
+       in the middle, and a footer naming the patterns this demo teaches.
+
+     How it works:
+       Routes.razor uses this as the DefaultLayout.  A layout is just a component with a @Body
+       placeholder: the router renders the current page into @Body.  Because the whole app runs in
+       Interactive Server mode, this layout lives on the server inside the user's SignalR circuit.
+
+     Data sources:
+       None for display.  The reset button calls DemoResetService (in-process), which asks each
+       service to reset ITS OWN data through its Development-only endpoint.
+
+     Read next: Pages/Home.razor (the store), then Pages/DeveloperPage.razor.
+    =================================================================================================
+*@
+@* A layout must inherit LayoutComponentBase: that base class provides the Body parameter. *@
 @inherits LayoutComponentBase
+@* @inject = dependency injection into a component (like a constructor parameter in a normal class).
+   Nav   : read the current URL and navigate in code.
+   JS    : IJSRuntime, the bridge to call JavaScript functions in the browser (over the circuit).
+   Cart  : the shopping cart; a SCOPED service, i.e. one instance per circuit = per browser tab.
+   Reset : resets all demo data (Development only).
+   Demo  : the "Demo" configuration section; Demo.Value.Enabled is true only in Development. *@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject CartService Cart
@@ -6,57 +34,86 @@
 @inject Microsoft.Extensions.Options.IOptions<MiniShop.Shared.Demo.DemoOptions> Demo
 
 <div class="shell">
+    @* ---- top bar ------------------------------------------------------------------------------- *@
     <header class="topbar">
         <a class="brand" href="/">🛍️ MiniShop</a>
+        @* NavLink is an <a> that automatically gets class="active" when its href matches the URL.
+           Match="NavLinkMatch.All" on "/" means "only the exact home URL", otherwise every URL
+           (which all start with "/") would mark Store as active. *@
         <nav>
             <NavLink href="/" Match="NavLinkMatch.All">Store</NavLink>
             <NavLink href="/cart">Cart</NavLink>
             <NavLink href="/orders">My Orders</NavLink>
+            @* DeveloperHref (see @code) carries the current order id along when coming from an order page. *@
             <NavLink href="@DeveloperHref" class="dev">Developer Mode</NavLink>
         </nav>
         @* Development only: the control plane is not available in Production. *@
         @if (Demo.Value.Enabled)
         {
+            @* disabled while a reset is running, so it cannot be clicked twice.  @onclick wires the
+               browser click (sent over SignalR) to the C# method ResetData. *@
             <button class="btn small danger" disabled="@_resetting" @onclick="ResetData"
                     title="Delete all orders, scenario runs and history; restore stock (10 each) and the demo wallet (2,000,000)">
                 @(_resetting ? "Resetting…" : "⟲ Reset data")
             </button>
         }
+        @* Light/dark switch: calls a small JavaScript helper defined in App.razor. *@
         <button class="ghost" title="toggle light/dark" @onclick="ToggleTheme">◐</button>
     </header>
+    @* ---- reset result banner (only after a reset) --------------------------------------------- *@
     @if (_resetMessage is not null)
     {
         <div class="reset-banner @(_resetOk ? "ok" : "err")">
             <span>@_resetMessage</span>
+            @* A lambda event handler: clicking ✕ clears the message; Blazor re-renders automatically
+               after any event handler, so no StateHasChanged is needed here. *@
             <button class="ghost" @onclick="() => _resetMessage = null">✕</button>
         </div>
     }
+    @* The current page is rendered here by the router. *@
     <main>@Body</main>
     <footer class="foot">Educational microservices demo · Saga · Outbox · Inbox · CQRS · RabbitMQ</footer>
 </div>
 
 @code {
+    // The current theme as known by C#.  The real source of truth is localStorage in the browser;
+    // we read it after the first render (see OnAfterRenderAsync).
     private string _theme = "light";
 
     /// <summary>Switching to Developer Mode keeps the current order context (orderId in the URL).</summary>
+    /// <remarks>
+    /// Example: on /orders/3f2a...  the link becomes /developer?orderId=3f2a..., and the Developer page
+    /// opens directly on that order (it reads the value with [SupplyParameterFromQuery]).
+    /// </remarks>
     private string DeveloperHref
     {
         get
         {
+            // Nav.Uri is the full current URL; we only need its path segments.
             var uri = new Uri(Nav.Uri);
             var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            // Exactly "/orders/{guid}"?  Then pass the id along.
             if (segments.Length == 2 && segments[0] == "orders" && Guid.TryParse(segments[1], out var id))
                 return $"/developer?orderId={id}";
             return "/developer";
         }
     }
 
+    /// <summary>
+    /// Blazor lifecycle method that runs AFTER the HTML is in the browser.  JavaScript interop is only
+    /// allowed from here on (during pre-rendering there is no browser connection yet), which is why
+    /// the theme is read here and not in OnInitialized.
+    /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
             _theme = await JS.InvokeAsync<string>("miniShop.getTheme");
     }
 
+    // State of the reset button and banner:
+    //   _resetting    — true while the reset is running (button disabled, text "Resetting…")
+    //   _resetOk      — colour of the banner: green when the reset succeeded, red otherwise
+    //   _resetMessage — banner text; null = no banner
     private bool _resetting;
     private bool _resetOk;
     private string? _resetMessage;
@@ -64,33 +121,41 @@
     /// <summary>Header button: after confirmation, reset every database to the seed and reload the current page.</summary>
     private async Task ResetData()
     {
+        // Calls the browser's built-in window.confirm(...) dialog through IJSRuntime and waits for the answer.
         var confirmed = await JS.InvokeAsync<bool>("confirm",
             "Reset ALL MiniShop data to the initial state?\n\nOrders, scenario runs, timeline and fault rules are deleted; stock goes back to 10 per product and the demo wallet to 2,000,000.");
         if (!confirmed) return;
 
         _resetting = true;
         _resetMessage = null;
+        // Render NOW (button shows "Resetting…") instead of only after the long await below.
         StateHasChanged();
         try
         {
+            // Asks every service to reset its own data (refused while a scenario is running).
             var result = await Reset.ResetAllAsync();
             _resetOk = result.Success;
             _resetMessage = result.Message;
             if (result.Success)
             {
+                // The cart lives in this circuit's memory; its products/prices may no longer be valid.
                 Cart.Clear();
+                // Go back to the store; replace: true does not add a history entry (Back skips it).
                 Nav.NavigateTo("/", replace: true);
             }
         }
         finally
         {
+            // Always re-enable the button, even if the reset threw.
             _resetting = false;
         }
     }
 
+    /// <summary>Flips light/dark and lets JavaScript apply it (data-theme attribute) and remember it.</summary>
     private async Task ToggleTheme()
     {
         _theme = _theme == "dark" ? "light" : "dark";
+        // InvokeVoidAsync: call a JS function when we do not need a return value.
         await JS.InvokeVoidAsync("miniShop.setTheme", _theme);
     }
 }

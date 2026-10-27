@@ -1,24 +1,49 @@
+@*
+    =================================================================================================
+     ScenarioReportPage.razor  —  the full report of one Scenario Lab run ("/developer/scenarios/{id}")
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       The scenario code and title, links back to the Developer Console and to the store view of the
+       order, what the scenario shows and its lesson, the verdict with expected-vs-actual trace and
+       all assertions (ExpectedVsActual component), and a table of the stock / wallet snapshots that
+       services recorded before, during and after each step.
+
+     Data source:
+       The Web's read model only: the ScenarioRun row and its assertions (written by ScenarioRunner /
+       ScenarioContext) and the event audit of the scenario's order (snapshots travel inside the
+       telemetry records).  Never another service's database.
+
+     Read next: Developer/ExpectedVsActual.razor.
+    =================================================================================================
+*@
 @page "/developer/scenarios/{RunId:guid}"
+@* Live: while the run is still in progress, its verdict and assertions appear by themselves. *@
 @inherits LiveComponentBase
 @inject ReadModelQueries Queries
 
 <PageTitle>Scenario report · MiniShop</PageTitle>
+@* "?." because _run is null until loaded (or for an unknown id). *@
 <h1>Scenario report <small class="muted">@(_run?.Code) @(_run?.Title)</small></h1>
 <p><a href="@ConsoleLink">← open in the Developer Console</a>
    @if (_run?.OrderId is { } oid) { <span> · <a href="/orders/@oid">store view of the order</a></span> }</p>
 
+@* Look up the static definition (summary + lesson) by the run's code; "is { } def" = not null, named def. *@
 @if (ScenarioCatalog.Find(_run?.Code ?? "") is { } def)
 {
     <div class="panel"><p><b>What this scenario shows:</b> @def.Summary</p><p><b>Lesson:</b> @def.Lesson</p></div>
 }
+@* Child component: verdict, expected vs actual trace, assertions with evidence. *@
 <ExpectedVsActual Run="_run" Assertions="_assertions" />
 
+@* ---- recorded snapshots -------------------------------------------------------------------- *@
 @if (_run?.OrderId is not null)
 {
     <h3>Before / during / after (recorded stock & wallet snapshots)</h3>
     <table class="table compact">
         <thead><tr><th>Time</th><th>Service</th><th>Step</th><th>Snapshot</th></tr></thead>
         <tbody>
+        @* Only audit records that carry a snapshot (JSON of the owner's state at that moment, sent by
+           the owner itself in its telemetry). *@
         @foreach (var e in _timeline.Where(e => e.SnapshotJson is not null))
         {
             <tr><td class="small mono">@Fmt.Time(e.OccurredAtUtc)</td><td>@e.Service</td><td><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span> <small>@e.SubjectMessageType</small></td><td><pre class="inline">@e.SnapshotJson</pre></td></tr>
@@ -28,16 +53,23 @@
 }
 
 @code {
+    /// <summary>The run id from the URL.</summary>
     [Parameter] public Guid RunId { get; set; }
+    // The run row (status, traces, log...) and its assertions.
     private ScenarioRun? _run;
     private List<ScenarioAssertion> _assertions = [];
+    // Audit records of the scenario's (first) order.
     private List<EventAudit> _timeline = [];
+    // Link back to the console, filtered to this scenario and, when known, focused on its order.
     private string ConsoleLink => $"/developer?scenarioId={RunId}" + (_run?.OrderId is { } o ? $"&orderId={o}" : "");
 
+    /// <summary>Reload when the URL's run id changes (the component is reused across navigations).</summary>
     protected override async Task OnParametersSetAsync() => await RefreshAsync();
 
+    /// <summary>Loads run + assertions, then the order's audit records (empty when no order was placed).</summary>
     protected override async Task RefreshAsync()
     {
+        // Tuple deconstruction: the query returns (run, assertions) in one call.
         (_run, _assertions) = await Queries.GetScenarioRunAsync(RunId);
         _timeline = _run?.OrderId is { } id ? await Queries.GetOrderTimelineAsync(id) : [];
     }

@@ -1,14 +1,44 @@
+@*
+    =================================================================================================
+     Home.razor  —  the store front ("/")
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       A welcome banner with the wallet balance of the current customer, and one card per product
+       (name, price, available / reserved stock, quantity box, "Add to cart" button).  After adding,
+       a small toast links to the cart.
+
+     Data source:
+       ONLY the Web's read model (readmodel.db), through ReadModelQueries.  The product cards and the
+       wallet are copies built by projections from events that Inventory and Payments publish
+       (ProductCatalogChanged, StockReserved, PaymentCompleted...).  The Web never opens inventory.db
+       or payments.db.  That is why the numbers can lag a moment behind the owners: CQRS read side.
+
+     Live updates:
+       The page inherits LiveComponentBase, so when a projection changes the read model the page
+       reloads its data and Blazor pushes the new HTML over the SignalR circuit.
+
+     Read next: Pages/CartPage.razor (what happens when you check out).
+    =================================================================================================
+*@
+@* The URL of this page.  "/" = the home page. *@
 @page "/"
+@* Re-render automatically when the read model changes (see LiveComponentBase.cs). *@
 @inherits LiveComponentBase
+@* Queries: read-side queries (readmodel.db).  Cart: the per-tab cart (scoped service).
+   Nav: navigation; injected but this page only uses plain links. *@
 @inject ReadModelQueries Queries
 @inject CartService Cart
 @inject NavigationManager Nav
 
+@* Sets the browser tab title (rendered into <head> by HeadOutlet in App.razor). *@
 <PageTitle>MiniShop</PageTitle>
 
+@* ---- welcome banner + wallet ------------------------------------------------------------------ *@
 <section class="hero">
     <h1>Welcome to MiniShop</h1>
     <p>Three products, one wallet, and a real distributed order flow behind the "Buy" button.</p>
+    @* The wallet balance is the read model's copy, updated from Payments'
+       events.  "…" is shown until the first load finishes. *@
     <div class="wallet-card">
         <span>Wallet of <b>@Cart.CustomerId</b></span>
         <strong>@(_wallet is null ? "…" : Fmt.Money(_wallet.Balance))</strong>
@@ -16,26 +46,35 @@
     </div>
 </section>
 
+@* ---- product grid ---------------------------------------------------------------------------- *@
 @if (_products.Count == 0)
 {
+    @* Empty read model (first start or right after a reset): the Web asked Inventory to publish a
+       snapshot of its catalogue; once that event is projected, LiveComponentBase re-renders this page. *@
     <p class="muted">Waiting for the catalog… The Web has asked Inventory for a snapshot (<code>ReadModelSnapshotRequested</code> → <code>ProductCatalogChanged</code>).
         If this stays empty, open <a href="/developer">Developer Mode</a> and check that Inventory and RabbitMQ are healthy.</p>
 }
 else
 {
     <div class="grid products">
+        @* One card per product row of the read model. *@
         @foreach (var p in _products)
         {
             <article class="card product">
                 <div class="emoji">@Emoji(p.Name)</div>
                 <h3>@p.Name</h3>
                 <p class="price">@Fmt.Money(p.Price)</p>
+                @* Available = on hand minus reserved (as projected).  "stock out" turns the text red. *@
                 <p class="@(p.Available > 0 ? "stock" : "stock out")">
                     @(p.Available > 0 ? $"{p.Available} available" : "out of stock")
                     @if (p.Reserved > 0) { <small> (@p.Reserved reserved)</small> }
                 </p>
                 <div class="row">
+                    @* @bind = two-way binding: the box shows _qty[productId], and when the user changes
+                       it (on "change", i.e. leaving the field) Blazor writes the new number back into
+                       the dictionary over the circuit. *@
                     <input type="number" min="1" max="99" @bind="_qty[p.ProductId]" />
+                    @* The lambda captures this card's product p, so each button adds its own product. *@
                     <button class="primary" disabled="@(p.Available <= 0)" @onclick="() => Add(p)">Add to cart</button>
                 </div>
             </article>
@@ -43,29 +82,38 @@ else
     </div>
 }
 
+@* ---- "added to cart" toast ----------------------------------------------------------------- *@
 @if (_added is not null)
 {
     <div class="toast">@_added added · <a href="/cart">go to cart (@Cart.Count)</a></div>
 }
 
 @code {
+    // Product cards from the read model (ProductCatalog projection).
     private List<ProductCard> _products = [];
+    // This customer's wallet as projected from Payments' events; null until loaded / unknown customer.
     private WalletBalance? _wallet;
+    // Quantity chosen in each card's number box, keyed by product id (bound with @bind above).
     private readonly Dictionary<Guid, int> _qty = new();
+    // Name of the last product added, shown in the toast; null = no toast.
     private string? _added;
 
+    /// <summary>Loads products and wallet from the read model (called at start and on every change).</summary>
     protected override async Task RefreshAsync()
     {
         _products = await Queries.GetProductsAsync();
         _wallet = await Queries.GetWalletAsync(Cart.CustomerId);
+        // Default quantity 1 for new products; TryAdd keeps a quantity the user already typed.
         foreach (var p in _products) _qty.TryAdd(p.ProductId, 1);
     }
 
+    /// <summary>"Add to cart": puts the chosen quantity into the in-memory cart (no service call yet).</summary>
     private void Add(ProductCard p)
     {
         Cart.Add(p, _qty.GetValueOrDefault(p.ProductId, 1));
         _added = p.Name;
     }
 
+    /// <summary>Just decoration: a picture per product name.</summary>
     private static string Emoji(string name) => name switch { "Headphones" => "🎧", "Keyboard" => "⌨️", "Mouse" => "🖱️", _ => "📦" };
 }

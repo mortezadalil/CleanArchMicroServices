@@ -1,13 +1,40 @@
+@*
+    =================================================================================================
+     OutboxInboxInspector.razor  —  the reliability plumbing of each service, made visible
+    -------------------------------------------------------------------------------------------------
+     Outbox / Inbox Inspector: counters from telemetry + the live tables read through each owner's
+     read-only diagnostics endpoint (never by opening its SQLite file).
+
+     Background for students:
+       * OUTBOX: a service never publishes a message directly inside its business transaction.  It
+         writes the message as a row into its own "OutboxMessages" table in the SAME transaction as
+         the business change, and a background dispatcher publishes the row to RabbitMQ afterwards
+         and marks it as published.  So "data saved but message lost" cannot happen.
+       * INBOX: a consumer records the id of every message it processed, in the same transaction as
+         its business change.  When the same message arrives again (at-least-once delivery), the
+         id is already there and the message is ignored ("dedup hit").
+
+     What the student sees on screen:
+       1. Six counters from the Web's event audit (stored, dispatched, retries, dedup hits, consumer
+          failures, dead letters), for all records or only the selected scenario.
+       2. For Orders, Inventory and Payments: the number of pending outbox rows, the latest outbox
+          rows (pending rows highlighted) and the latest inbox rows, optionally filtered to one order.
+
+     Data sources:
+       Counters: Web read model (EventAudit).  Tables: each owner's diagnostics endpoint over HTTP.
+
+     Read next: Developer/DatabaseExplorer.razor.
+    =================================================================================================
+*@
+@* Clients: HTTP calls to the owners' diagnostics endpoints.  Queries: the Web's read model. *@
 @inject ServiceClients Clients
 @inject ReadModelQueries Queries
+@* JsonArray / JsonNode: the diagnostics answers are loosely typed JSON, read with the JsonNode API. *@
 @using System.Text.Json.Nodes
 
-@*
-    Outbox / Inbox Inspector: counters from telemetry + the live tables read through each owner's
-    read-only diagnostics endpoint (never by opening its SQLite file).
-*@
 <div class="panel">
     <h3>Outbox / Inbox</h3>
+    @* ---- counters (from telemetry stored in readmodel.db) --------------------------------------- *@
     <div class="cards">
         <div class="stat"><span>Outbox stored</span><b>@Count("OutboxStored")</b></div>
         <div class="stat"><span>Outbox dispatched</span><b>@Count("OutboxDispatched")</b></div>
@@ -16,17 +43,23 @@
         <div class="stat"><span>Consumer failures</span><b>@Count("ConsumerFailed")</b></div>
         <div class="stat"><span>Dead-lettered</span><b>@Count("MessageDeadLettered")</b></div>
     </div>
+    @* The tables are NOT live (they cost three HTTP calls each): the button reloads them on demand. *@
     <p class="muted small">@(OrderId is null ? "All records." : $"Filtered to order {Fmt.Short(OrderId)}.") <button class="btn small" @onclick="LoadAsync">refresh tables</button></p>
 
+    @* ---- one block per owner service ------------------------------------------------------------ *@
     @foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
     {
+        @* "is var p && p >= 0": pattern trick to name the value inline; -1 means "service did not answer". *@
         <h4>@service <small class="muted">pending: @(_pending.GetValueOrDefault(service, -1) is var p && p >= 0 ? p.ToString() : "n/a")</small></h4>
         <div class="two-col">
+            @* Outbox rows: message id, type, destination queue (or "publish" for events sent to all
+               subscribers), dispatch attempts, published or pending, last dispatch error. *@
             <table class="table compact">
                 <thead><tr><th>Outbox</th><th>type</th><th>dest</th><th>attempts</th><th>published</th><th>last error</th></tr></thead>
                 <tbody>
                 @foreach (var row in _outbox.GetValueOrDefault(service) ?? [])
                 {
+                    @* Not yet published → class "pending-row" (highlighted in app.css). *@
                     <tr class="@(row!["publishedAtUtc"] is null ? "pending-row" : "")">
                         <td class="mono small">@Fmt.ShortId(row["messageId"])</td>
                         <td>@row["type"]</td><td class="small">@(row["destinationQueue"]?.GetValue<string>() ?? "publish")</td>
@@ -36,6 +69,7 @@
                 }
                 </tbody>
             </table>
+            @* Inbox rows: ids of messages this service has already processed. *@
             <table class="table compact">
                 <thead><tr><th>Inbox</th><th>type</th><th>received</th></tr></thead>
                 <tbody>
@@ -50,27 +84,40 @@
 </div>
 
 @code {
+    /// <summary>Optional order filter for the tables (null = latest rows of all orders).</summary>
     [Parameter] public Guid? OrderId { get; set; }
+    /// <summary>Optional scenario filter for the counters (null = all records).</summary>
     [Parameter] public Guid? ScenarioId { get; set; }
 
+    // Counter per diagnostic kind, from the Web's event audit.
     private Dictionary<string, int> _counts = new();
+    // Per service: pending outbox rows (-1 = unknown), latest outbox rows, latest inbox rows.
     private readonly Dictionary<string, int> _pending = new();
     private readonly Dictionary<string, JsonArray> _outbox = new();
     private readonly Dictionary<string, JsonArray> _inbox = new();
 
+    // 0 when no record of that kind exists.
     private int Count(string kind) => _counts.GetValueOrDefault(kind);
 
+    /// <summary>Reload whenever the parent passes a different order / scenario.</summary>
     protected override async Task OnParametersSetAsync() => await LoadAsync();
 
+    /// <summary>
+    /// Loads counters and tables.  Public so the parent page could trigger it too; the button calls it
+    /// directly (Blazor re-renders after the click handler completes).
+    /// </summary>
     public async Task LoadAsync()
     {
         _counts = await Queries.GetDiagnosticCountsAsync(ScenarioId);
+        // Query-string fragment appended to the diagnostics URLs when an order is selected.
         var filter = OrderId is null ? "" : $"&orderId={OrderId}";
         foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments })
         {
+            // The outbox endpoint returns { pending: n, rows: [...] }.
             var outbox = await Clients.DiagnosticsAsync(service, $"outbox?take=15{filter}");
             _pending[service] = outbox?["pending"]?.GetValue<int>() ?? -1;
             _outbox[service] = outbox?["rows"]?.AsArray() ?? [];
+            // The inbox endpoint returns a plain array of rows.
             _inbox[service] = (await Clients.DiagnosticsAsync(service, $"inbox?take=10{filter}"))?.AsArray() ?? [];
         }
     }

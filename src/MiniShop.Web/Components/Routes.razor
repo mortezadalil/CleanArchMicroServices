@@ -1,6 +1,27 @@
+@*
+    =================================================================================================
+     Routes.razor  —  the client-side router: maps the URL to a page component
+    -------------------------------------------------------------------------------------------------
+     What it is:
+       Blazor's <Router> scans our assembly for components that declare  @page "/some/url"  and,
+       for the current URL, renders the matching one.  Navigation between pages does NOT reload the
+       browser page: the router swaps components over the existing SignalR circuit.
+
+     What the student sees on screen: the current page, wrapped in MainLayout (header + navigation).
+     Data source: none.
+
+     Read next: Layout/MainLayout.razor, then Pages/Home.razor.
+    =================================================================================================
+*@
+@* AppAssembly: where to look for @page components — our own project (the assembly that contains Program). *@
 <Router AppAssembly="typeof(Program).Assembly">
+    @* <Found> is used when a page matches the URL.  Context="routeData" names the variable that holds
+       the matched page type and its route parameters. *@
     <Found Context="routeData">
+        @* RouteView renders the matched page inside the default layout (MainLayout) unless the page
+           chooses another layout with @layout. *@
         <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        @* Accessibility: after each navigation, move keyboard/screen-reader focus to the page's <h1>. *@
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
 </Router>

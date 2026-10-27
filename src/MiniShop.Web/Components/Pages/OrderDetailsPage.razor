@@ -1,3 +1,26 @@
+@*
+    =================================================================================================
+     OrderDetailsPage.razor  —  one order as the customer sees it ("/orders/{id}")
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       The order id with its state badge and a one-line explanation of the state, the order lines and
+       total, a button to inspect the flow in Developer Mode, and "What happened": the business events
+       of this order in the order they were recorded.  While the saga is still running, a "Still in
+       progress" hint is shown and the page updates by itself.
+
+     Data source:
+       The Web's read model only: the projected order row and the event audit (telemetry records that
+       every service sends).  Never orders.db directly.
+
+     Why "Processing…" first?  Checkout navigates here right after Orders answered 202.  At that
+     moment the OrderPlaced event may not have been projected yet, so the read model has no row.
+     A moment later the projection runs, LiveComponentBase refreshes, and the details appear.
+
+     Read next: Pages/DeveloperPage.razor (the same order, seen from the inside).
+    =================================================================================================
+*@
+@* Route parameter with a constraint: {OrderId:guid} only matches a valid Guid and fills the OrderId
+   [Parameter] below. *@
 @page "/orders/{OrderId:guid}"
 @inherits LiveComponentBase
 @inject ReadModelQueries Queries
@@ -6,15 +29,18 @@
 
 @if (_order is null)
 {
+    @* Not projected yet (see header comment). *@
     <h1>Order @Fmt.Short(OrderId)</h1>
     <p class="muted">Processing… the order was accepted (202) and the read model has not received <code>OrderPlaced</code> yet.</p>
 }
 else
 {
+    @* ---- title + state ------------------------------------------------------------------------ *@
     <h1>Order <code>@Fmt.Short(OrderId)</code> <span class="@Fmt.StateClass(_order.State)">@_order.State</span></h1>
     <p class="muted small">@StateExplanation(_order.State) @(_order.FailureReason is null ? "" : $"— {_order.FailureReason}")</p>
 
     <div class="two-col">
+        @* ---- left column: order lines --------------------------------------------------------- *@
         <div>
             <table class="table">
                 <thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
@@ -28,14 +54,18 @@ else
             </table>
             <a class="btn" href="/developer?orderId=@OrderId">Inspect flow in Developer Mode →</a>
         </div>
+        @* ---- right column: business events of this order --------------------------------------- *@
         <div>
             <h3>What happened</h3>
             <ol class="steps">
+                @* Only "Business" records (OrderPlaced, StockReserved, ...); technical records such as
+                   MessageConsumed or OutboxDispatched are left for the Developer page. *@
                 @foreach (var e in _timeline.Where(e => e.Category == "Business"))
                 {
                     <li><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span> <small class="muted">@e.Service · @Fmt.Time(e.OccurredAtUtc)</small></li>
                 }
             </ol>
+            @* Non-final states: the saga is still working. *@
             @if (_order.State is "Pending" or "AwaitingPayment" or "Compensating" or "Rejecting")
             {
                 <p class="muted small">⏳ Still in progress. This page updates automatically.</p>
@@ -45,19 +75,30 @@ else
 }
 
 @code {
+    /// <summary>The order id from the URL (filled by the router because of {OrderId:guid}).</summary>
     [Parameter] public Guid OrderId { get; set; }
+    // The projected order row; null until the read model has it.
     private OrderSummary? _order;
+    // All audit records of this order (business + technical), oldest first.
     private List<EventAudit> _timeline = [];
+    // The read model stores the lines as JSON text; deserialize them with the shared JSON options
+    // (same naming rules as the services use).  Empty list while there is no order yet.
     private List<OrderLine> Lines => _order is null ? [] : System.Text.Json.JsonSerializer.Deserialize<List<OrderLine>>(_order.LinesJson, MiniShop.Shared.Messaging.Json.Options) ?? [];
 
+    /// <summary>
+    /// Runs whenever the route parameter changes.  Needed because Blazor REUSES this component when
+    /// navigating from /orders/A to /orders/B: OnInitialized does not run again, but this does.
+    /// </summary>
     protected override async Task OnParametersSetAsync() => await RefreshAsync();
 
+    /// <summary>Loads the order and its audit records from the read model.</summary>
     protected override async Task RefreshAsync()
     {
         _order = await Queries.GetOrderDetailsAsync(OrderId);
         _timeline = await Queries.GetOrderTimelineAsync(OrderId);
     }
 
+    /// <summary>A customer-friendly sentence for each order state.</summary>
     private static string StateExplanation(string state) => state switch
     {
         "Pending" => "Accepted. Inventory has not answered yet.",

@@ -1,23 +1,49 @@
+@*
+    =================================================================================================
+     DatabaseExplorer.razor  —  the important rows of all four databases, side by side
+    -------------------------------------------------------------------------------------------------
+     Database Explorer: read-only view of the important rows of each database, through the owners'
+     diagnostics endpoints (no free SQL, no direct file access).  Filter by order id.
+
+     Why this matters (database per service):
+       Each service owns exactly one database and is the only process that opens it.  Even this
+       explorer, which lives in the Web service, does NOT open orders.db, inventory.db or payments.db:
+       it asks Orders, Inventory and Payments over HTTP for their rows.  Only readmodel.db, which the
+       Web itself owns, is read directly (through ReadModelQueries).
+
+     What the student sees on screen: four sections in a grid
+       orders.db     — with an order selected: the full order + saga evidence as JSON;
+                       otherwise the latest orders and the latest saga instances (state, deadline,
+                       compensation attempts, version used for optimistic concurrency).
+       inventory.db  — stock per product (on hand / reserved / available) and reservations.
+       payments.db   — wallets (balance, version) and the wallet ledger (debits, cancellations).
+       readmodel.db  — the Web's projected order summaries and product cards.
+     Comparing orders.db with readmodel.db shows the CQRS lag with your own eyes.
+
+     Read next: Developer/CqrsExplorer.razor.
+    =================================================================================================
+*@
 @inject ServiceClients Clients
 @inject ReadModelQueries Queries
 @using System.Text.Json.Nodes
 
-@*
-    Database Explorer: read-only view of the important rows of each database, through the owners'
-    diagnostics endpoints (no free SQL, no direct file access).  Filter by order id.
-*@
 <div class="panel">
     <h3>Databases (read-only)</h3>
+    @* Not live: reload on demand with the refresh button (or when the selected order changes). *@
     <p class="muted small">Order filter: <code>@(OrderId?.ToString() ?? "none")</code> <button class="btn small" @onclick="LoadAsync">refresh</button></p>
+    @* db-grid: responsive grid of the four sections (see app.css). *@
     <div class="db-grid">
+        @* ---- orders.db (owned by Orders) ---------------------------------------------------------- *@
         <section>
             <h4>orders.db</h4>
             @if (_order is not null)
             {
+                @* Selected order: the whole diagnostics answer (order row + saga row), pretty-printed. *@
                 <pre>@TimelineView.Pretty(_order.ToJsonString())</pre>
             }
             else
             {
+                @* No order selected: two small tables with the 10 latest rows each. *@
                 <table class="table compact"><thead><tr><th>Orders</th><th>customer</th><th>amount</th><th>state</th></tr></thead><tbody>
                 @foreach (var o in _orders) { <tr><td class="mono small">@Fmt.ShortId(o!["id"])</td><td class="small">@o["customerId"]</td><td>@o["amount"]</td><td>@o["state"]</td></tr> }
                 </tbody></table>
@@ -26,24 +52,30 @@
                 </tbody></table>
             }
         </section>
+        @* ---- inventory.db (owned by Inventory) ---------------------------------------------------- *@
         <section>
             <h4>inventory.db</h4>
+            @* available = onHand - reserved: what can still be sold. *@
             <table class="table compact"><thead><tr><th>Stock</th><th>onHand</th><th>reserved</th><th>available</th></tr></thead><tbody>
             @foreach (var s in _stock) { <tr><td>@s!["name"]</td><td>@s["onHand"]</td><td>@s["reserved"]</td><td><b>@s["available"]</b></td></tr> }
             </tbody></table>
+            @* One reservation per order: Reserved → Committed (paid) or Released (compensated) / Rejected. *@
             <table class="table compact"><thead><tr><th>Reservations</th><th>order</th><th>state</th><th>reason</th></tr></thead><tbody>
             @foreach (var r in _reservations) { <tr><td class="mono small">@Fmt.ShortId(r!["id"])</td><td class="mono small">@Fmt.ShortId(r["orderId"])</td><td>@r["state"]</td><td class="small">@r["reason"]</td></tr> }
             </tbody></table>
         </section>
+        @* ---- payments.db (owned by Payments) ------------------------------------------------------ *@
         <section>
             <h4>payments.db</h4>
             <table class="table compact"><thead><tr><th>Wallets</th><th>balance</th><th>version</th></tr></thead><tbody>
             @foreach (var w in _wallets) { <tr><td class="small">@w!["customerId"]</td><td>@w["balance"]</td><td>@w["version"]</td></tr> }
             </tbody></table>
+            @* The ledger is the history of money operations; a "Cancelled" row is the tombstone of S10. *@
             <table class="table compact"><thead><tr><th>WalletLedger</th><th>order</th><th>amount</th><th>op</th><th>state</th><th>reason</th></tr></thead><tbody>
             @foreach (var l in _ledger) { <tr><td class="small">@l!["customerId"]</td><td class="mono small">@Fmt.ShortId(l["orderId"])</td><td>@l["amount"]</td><td>@l["operationType"]</td><td>@l["state"]</td><td class="small">@l["reason"]</td></tr> }
             </tbody></table>
         </section>
+        @* ---- readmodel.db (owned by the Web itself: read directly) --------------------------------- *@
         <section>
             <h4>readmodel.db</h4>
             <table class="table compact"><thead><tr><th>OrderSummaries</th><th>state</th><th>last event</th><th>updated</th></tr></thead><tbody>
@@ -57,25 +89,36 @@
 </div>
 
 @code {
+    /// <summary>The selected order (null = show the latest rows of everything).</summary>
     [Parameter] public Guid? OrderId { get; set; }
 
+    // orders.db evidence of the selected order (order + saga), or null.
     private JsonNode? _order;
+    // Owner rows as loosely typed JSON arrays (C# allows several fields in one declaration).
     private JsonArray _orders = [], _sagas = [], _stock = [], _reservations = [], _wallets = [], _ledger = [];
+    // Read-model rows, strongly typed because the Web owns these tables.
     private List<OrderSummary> _readOrders = [];
     private List<ProductCard> _cards = [];
 
+    /// <summary>Reload when the selected order changes.</summary>
     protected override async Task OnParametersSetAsync() => await LoadAsync();
 
+    /// <summary>Loads every section: owners via diagnostics HTTP calls, the read model directly.</summary>
     public async Task LoadAsync()
     {
+        // "?orderId=..." when an order is selected, otherwise "" (then "?take=10" is used below).
         var f = OrderId is null ? "" : $"?orderId={OrderId}";
+        // orders.db: either the one order (with saga) or the 10 latest orders and sagas.
         _order = OrderId is null ? null : await Clients.DiagnosticsAsync(ServiceNames.Orders, $"orders/{OrderId}");
         _orders = OrderId is null ? (await Clients.DiagnosticsAsync(ServiceNames.Orders, "orders?take=10"))?.AsArray() ?? [] : [];
         _sagas = OrderId is null ? (await Clients.DiagnosticsAsync(ServiceNames.Orders, "sagas?take=10"))?.AsArray() ?? [] : [];
+        // inventory.db: stock is small, always all of it; reservations filtered or latest 10.
         _stock = (await Clients.DiagnosticsAsync(ServiceNames.Inventory, "stock"))?.AsArray() ?? [];
         _reservations = (await Clients.DiagnosticsAsync(ServiceNames.Inventory, $"reservations{(f == "" ? "?take=10" : f)}"))?.AsArray() ?? [];
+        // payments.db: all wallets; ledger filtered or latest 10.
         _wallets = (await Clients.DiagnosticsAsync(ServiceNames.Payments, "wallets"))?.AsArray() ?? [];
         _ledger = (await Clients.DiagnosticsAsync(ServiceNames.Payments, $"ledger{(f == "" ? "?take=10" : f)}"))?.AsArray() ?? [];
+        // readmodel.db: the selected order's summary (as a one-element list) or the 10 latest.
         _readOrders = OrderId is null ? await Queries.GetOrdersAsync(take: 10) : (await Queries.GetOrderDetailsAsync(OrderId.Value)) is { } o ? [o] : [];
         _cards = await Queries.GetProductsAsync();
     }

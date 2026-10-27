@@ -1,21 +1,49 @@
+@*
+    =================================================================================================
+     CqrsExplorer.razor  —  write side vs read side of one order, and the projection lag
+    -------------------------------------------------------------------------------------------------
+     CQRS Explorer: write state (owner database, via diagnostics) next to read state (readmodel.db),
+     the projection lag, and the Rebuild button that replays EventAudit.
+
+     Background for students (CQRS = Command Query Responsibility Segregation):
+       * WRITE side: Orders changes orders.db when it handles commands.  That is the truth.
+       * READ side: the Web listens to the events Orders/Inventory/Payments publish and "projects"
+         them into its own readmodel.db, shaped for the pages.  It is updated AFTER the write side,
+         so for a short time the two can differ: eventual consistency.
+       * Because the read side is built only from events, it can be thrown away and rebuilt from the
+         stored events at any time ("Reset & rebuild").
+
+     What the student sees on screen:
+       Four counters (events applied, last projection lag in ms, Web queue backlog in RabbitMQ, time
+       of the last projected event); with an order selected, a table with the order state on the
+       WRITE side and on the READ side, plus a hint when they differ; the rebuild and refresh buttons.
+
+     Data sources:
+       Write side: Orders' read-only diagnostics endpoint (never orders.db directly).
+       Read side and lag: the Web's read model.  Backlog: the health monitor (RabbitMQ management API).
+
+     Read next: Developer/ReplayPlayer.razor.
+    =================================================================================================
+*@
 @inject ServiceClients Clients
 @inject ReadModelQueries Queries
+@* Health: knows the RabbitMQ queue depths.  Rebuilder: wipes and re-projects the read model. *@
 @inject ServiceHealthMonitor Health
 @inject ReadModelRebuilder Rebuilder
 @using System.Text.Json.Nodes
 
-@*
-    CQRS Explorer: write state (owner database, via diagnostics) next to read state (readmodel.db),
-    the projection lag, and the Rebuild button that replays EventAudit.
-*@
 <div class="panel">
     <h3>CQRS: write side vs read side</h3>
+    @* ---- projection counters ---------------------------------------------------------------------- *@
     <div class="cards">
         <div class="stat"><span>events applied</span><b>@_lag.AppliedCount</b></div>
+        @* Lag = time between the event happening in the owner and the Web applying it. *@
         <div class="stat"><span>last projection lag</span><b>@($"{_lag.LastLagMs:0} ms")</b></div>
+        @* Messages waiting in the Web's queue: events not yet projected. *@
         <div class="stat"><span>web queue backlog</span><b>@_lag.QueueBacklog</b></div>
         <div class="stat"><span>last event occurred</span><b class="small">@(_lag.LastEventOccurredAtUtc is null ? "—" : Fmt.Time(_lag.LastEventOccurredAtUtc.Value))</b></div>
     </div>
+    @* ---- write vs read comparison for the selected order --------------------------------------------- *@
     @if (OrderId is not null)
     {
         <table class="table compact">
@@ -28,6 +56,7 @@
         @if (_writeState != _readState) { <p class="hint">The two sides differ right now: that is eventual consistency. The read side will converge as soon as the pending events are projected.</p> }
         else { <p class="muted small">Both sides agree.</p> }
     }
+    @* ---- actions ------------------------------------------------------------------------------------ *@
     <p>
         <button class="btn small" @onclick="Rebuild">Reset &amp; rebuild read model from EventAudit</button>
         <button class="btn small" @onclick="LoadAsync">refresh</button>
@@ -36,23 +65,33 @@
 </div>
 
 @code {
+    /// <summary>The selected order (null = only the counters are shown).</summary>
     [Parameter] public Guid? OrderId { get; set; }
+    // Projection statistics; starts as "nothing applied yet".
     private ProjectionLag _lag = new(0, null, null, 0, 0);
+    // Write-side order and saga state (from Orders), read-side order state (from readmodel.db).
     private string? _writeState, _writeSaga, _readState;
+    // How many events the last rebuild replayed; null = no rebuild done in this view.
     private int? _rebuilt;
 
+    /// <summary>Reload when the selected order changes.</summary>
     protected override async Task OnParametersSetAsync() => await LoadAsync();
 
+    /// <summary>Loads the lag statistics and, for a selected order, both sides' states.</summary>
     public async Task LoadAsync()
     {
+        // Current depth of the Web's queue in RabbitMQ (0 when unknown).
         var backlog = Health.Queues.FirstOrDefault(q => q.Name == Topology.WebQueue)?.Backlog ?? 0;
         _lag = await Queries.GetProjectionLagAsync(backlog);
         if (OrderId is null) return;
+        // WRITE side: ask Orders (the owner) through its diagnostics endpoint.
         var write = await Clients.DiagnosticsAsync(ServiceNames.Orders, $"orders/{OrderId}");
         _writeState = write?["order"]?["state"]?.GetValue<string>();
         _writeSaga = write?["saga"]?["currentState"]?.GetValue<string>();
+        // READ side: our own projection.
         _readState = (await Queries.GetOrderDetailsAsync(OrderId.Value))?.State;
     }
 
+    /// <summary>Wipes the read model and re-applies every stored event, then reloads this panel.</summary>
     private async Task Rebuild() { _rebuilt = await Rebuilder.RebuildAsync(CancellationToken.None); await LoadAsync(); }
 }

@@ -1,15 +1,58 @@
+@*
+    =================================================================================================
+     App.razor  —  the root component: the ONE real HTML document of the whole web app
+    -------------------------------------------------------------------------------------------------
+     What it is:
+       Program.cs calls  app.MapRazorComponents<App>(),  so every browser request for a page renders
+       this component first.  It produces <html>, <head> and <body>; everything else (layout, pages)
+       is rendered INSIDE it by the <Routes> component.
+
+     What the student sees on screen:
+       Nothing of its own; it only provides the frame (stylesheet, Blazor script, theme helper).
+
+     How Blazor works here (Interactive Server render mode):
+       1. The first request returns normal, pre-rendered HTML (fast first paint).
+       2. blazor.web.js (loaded below) then opens a SignalR connection (a WebSocket) to the server.
+          That connection is called a "circuit".  The components keep living ON THE SERVER, one set
+          per browser tab.
+       3. A click in the browser travels over the circuit to the server, C# runs there, and the
+          server sends back only the changed parts of the HTML ("render diff").  The server can also
+          push a re-render on its own, e.g. when a new message was projected into the read model.
+       So the browser never calls our APIs, never queries a database and never talks to RabbitMQ.
+
+     Data source: none (pages below this one read the Web's read model).
+
+     Read next: Routes.razor, then Layout/MainLayout.razor.
+    =================================================================================================
+*@
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    @* <base href="/"> makes relative URLs (app.css, _framework/...) resolve from the site root on every page. *@
     <base href="/" />
+    @* Our only stylesheet: wwwroot/app.css (light + dark theme, layout, developer console). *@
     <link rel="stylesheet" href="app.css" />
+    @* HeadOutlet renders whatever pages put into <PageTitle>/<HeadContent>.  It needs the same
+       interactive render mode as the router so the browser tab title updates while navigating. *@
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
+    @* The router, made interactive for the whole app: every page below runs in Interactive Server mode
+       (no page needs its own @rendermode).  This is a "global" interactivity setting. *@
     <Routes @rendermode="InteractiveServer" />
+    @* The Blazor runtime script: starts the SignalR circuit and applies the HTML diffs the server sends. *@
     <script src="_framework/blazor.web.js"></script>
+    @* Three small JavaScript helpers, called from C# through IJSRuntime (see MainLayout and the
+       developer components):
+         miniShop.copy(text)      — copy an id to the clipboard ("copy" buttons)
+         miniShop.setTheme(theme) — switch light/dark: sets <html data-theme="..."> which app.css reads,
+                                    and remembers the choice in localStorage
+         miniShop.getTheme()      — read the remembered theme (defaults to light)
+       The try/catch blocks protect against browsers where localStorage is blocked.
+       The last line applies the saved theme immediately, before Blazor starts, so the page does not
+       flash in the wrong colours. *@
     <script>
         // Tiny helpers used by the Developer Console (copy ids, remember the theme).
         window.miniShop = {

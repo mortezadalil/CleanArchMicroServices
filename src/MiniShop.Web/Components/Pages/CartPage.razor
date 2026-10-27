@@ -1,5 +1,31 @@
+@*
+    =================================================================================================
+     CartPage.razor  —  cart and checkout ("/cart")
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       The cart lines (editable quantity, remove button), the total, the wallet balance with a warning
+       when it is too small, the cart's Idempotency-Key, and the "Place order" button.
+
+     Data sources:
+       * The cart itself is UI state in CartService, a SCOPED service: Blazor Server creates one
+         instance per circuit (= per browser tab), so each tab has its own cart in server memory.
+       * The wallet balance comes from the Web's read model (projected from Payments' events).
+       * "Place order" is the ONLY write: an HTTP POST to the Orders service's public API.  The Web
+         never inserts into orders.db itself; Orders owns the order.
+
+     What happens on checkout:
+       Orders answers 202 Accepted + orderId as soon as the order and its OrderPlaced outbox row are
+       committed.  The saga (reserve stock → charge wallet → confirm) runs asynchronously afterwards,
+       so we navigate straight to the order page, which shows the progress live.
+
+     Read next: Pages/OrderDetailsPage.razor.
+    =================================================================================================
+*@
 @page "/cart"
+@* Live: the wallet shown here refreshes when a payment event is projected. *@
 @inherits LiveComponentBase
+@* Queries: read model.  Cart: this tab's cart.  Clients: typed HTTP clients for the other services.
+   Nav: navigate to the order page after checkout. *@
 @inject ReadModelQueries Queries
 @inject CartService Cart
 @inject ServiceClients Clients
@@ -14,6 +40,7 @@
 }
 else
 {
+    @* ---- cart lines --------------------------------------------------------------------------- *@
     <table class="table">
         <thead><tr><th>Product</th><th>Unit price</th><th>Qty</th><th>Total</th><th></th></tr></thead>
         <tbody>
@@ -22,6 +49,8 @@ else
             <tr>
                 <td>@line.ProductName</td>
                 <td>@Fmt.Money(line.UnitPrice)</td>
+                @* One-way value + @onchange (instead of @bind) because changing the quantity must go
+                   through CartService.SetQuantity, which validates it.  ChangeEventArgs carries the new text. *@
                 <td><input type="number" min="1" max="99" value="@line.Quantity" @onchange="e => SetQuantity(line.ProductId, e)" /></td>
                 <td>@Fmt.Money(line.LineTotal)</td>
                 <td><button class="ghost" @onclick="() => Cart.Remove(line.ProductId)">✕</button></td>
@@ -31,10 +60,15 @@ else
         <tfoot><tr><th colspan="3">Total</th><th>@Fmt.Money(Cart.Total)</th><th></th></tr></tfoot>
     </table>
 
+    @* ---- checkout box ------------------------------------------------------------------------- *@
     <div class="checkout">
+        @* The warning is only a hint from the read model; the real decision is made by Payments
+           (the wallet owner) when it handles ChargeWallet. *@
         <p>Wallet balance: <b>@(_wallet is null ? "…" : Fmt.Money(_wallet.Balance))</b>
             @if (_wallet is not null && _wallet.Balance < Cart.Total) { <span class="badge warn">not enough — the order will be rejected (that is scenario S03)</span> }
         </p>
+        @* The Idempotency-Key is created once per cart: clicking twice, or retrying after a network
+           error, sends the SAME key, and Orders returns the existing order instead of a second one (S14). *@
         <p class="muted small">The cart is UI state kept in this Blazor circuit (a full page reload empties it). Idempotency-Key for this cart: <code>@Cart.IdempotencyKey</code> — a retried click can never create two orders.</p>
         <button class="primary big" disabled="@_busy" @onclick="Checkout">@(_busy ? "Placing order…" : "Place order")</button>
         @if (_error is not null) { <p class="error">@_error</p> }
@@ -42,12 +76,17 @@ else
 }
 
 @code {
+    // Read-model copy of this customer's wallet; null until loaded.
     private WalletBalance? _wallet;
+    // True while the POST is in flight: disables the button and shows "Placing order…".
     private bool _busy;
+    // Error text shown under the button when Orders could not be reached.
     private string? _error;
 
+    /// <summary>Only the wallet needs reloading; the cart lives in memory and is always current.</summary>
     protected override async Task RefreshAsync() => _wallet = await Queries.GetWalletAsync(Cart.CustomerId);
 
+    /// <summary>Quantity box changed: parse the text (fallback 1) and update the cart.</summary>
     private void SetQuantity(Guid productId, ChangeEventArgs e) =>
         Cart.SetQuantity(productId, int.TryParse(e.Value?.ToString(), out var q) ? q : 1);
 
@@ -57,12 +96,16 @@ else
         _busy = true; _error = null;
         try
         {
+            // ScenarioId = null: this is a normal order, not part of a Scenario Lab experiment.
+            // The cart's Idempotency-Key goes in the HTTP header (see ServiceClients.PlaceOrderAsync).
             var response = await Clients.PlaceOrderAsync(new PlaceOrderRequest(Cart.CustomerId, Cart.Lines.ToList(), null), Cart.IdempotencyKey);
+            // Accepted: the cart is done (clearing also creates a new Idempotency-Key for the next cart).
             Cart.Clear();
             Nav.NavigateTo($"/orders/{response.OrderId}");
         }
         catch (Exception ex)
         {
+            // We keep the cart AND its key, so pressing the button again is a safe retry.
             _error = $"The Orders API could not be reached ({ex.Message}). The cart and its Idempotency-Key are kept: try again.";
         }
         finally { _busy = false; }

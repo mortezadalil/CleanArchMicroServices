@@ -1,11 +1,31 @@
 @*
-    Scenario report: expected vs actual trace, invariants with evidence, counters.  Printed in the
-    same shape as the specification's example so students can compare runs.
+    =================================================================================================
+     ExpectedVsActual.razor  —  the verdict box of one Scenario Lab run
+    -------------------------------------------------------------------------------------------------
+     Scenario report: expected vs actual trace, invariants with evidence, counters.  Printed in the
+     same shape as the specification's example so students can compare runs.
+
+     What the student sees on screen:
+       1. A monospaced text block: scenario, order, status, EXPECTED message sequence, ACTUAL message
+          sequence, list of invariants with PASS/FAIL, delivery attempts, dedup hits, final saga
+          state and the summary.
+       2. A table of invariants (✅ / ❌) with the evidence text, i.e. where the value was read.
+       3. The run log (open by default), the step-by-step story written by ScenarioContext.
+
+     Data source:
+       Only its parameters, which the parent page loaded from the Web's read model (ScenarioRuns and
+       ScenarioAssertions rows written by ScenarioRunner / ScenarioContext).
+
+     Used by: DeveloperPage.razor and ScenarioReportPage.razor.
+     Read next: Developer/ScenarioRunsTable.razor.
+    =================================================================================================
 *@
 <div class="panel report">
     @if (Run is null) { <p class="muted">No scenario run selected.</p> }
     else
     {
+        @* NOTE: inside <pre> every space and line break is shown as-is, which is why the lines below
+           start at column 0 and no comment may be placed inside this element. *@
         <pre class="report-text">Scenario: @Run.Code — @Run.Title
 Order: @(Run.OrderId?.ToString() ?? "—")
 Correlation: @(Run.OrderId?.ToString() ?? "—")
@@ -15,6 +35,7 @@ Actual:   @string.Join(" -> ", Actual)
 Invariants: @(Assertions.Count == 0 ? "(none yet)" : string.Join(", ", Assertions.Select(a => $"[{(a.Passed ? "PASS" : "FAIL")}] {a.Name}")))
 Delivery attempts: @Run.DeliveryAttempts | Dedup hits: @Run.DedupHits | Final saga: @(Run.FinalSagaState ?? "—")
 @(Run.Summary is null ? "" : $"Summary: {Run.Summary}")</pre>
+        @* Invariant table: one row per AssertAsync call; failed rows get the "failed" CSS class (red). *@
         @if (Assertions.Count > 0)
         {
             <table class="table compact">
@@ -27,15 +48,21 @@ Delivery attempts: @Run.DeliveryAttempts | Dedup hits: @Run.DedupHits | Final sa
                 </tbody>
             </table>
         }
+        @* <details open> = a native, collapsible HTML section that starts expanded (no C# needed). *@
         <details open><summary>run log</summary><pre class="log">@Run.Log</pre></details>
     }
 </div>
 
 @code {
+    /// <summary>The run to show (null = nothing selected).  [Parameter] = set by the parent component.</summary>
     [Parameter] public ScenarioRun? Run { get; set; }
+    /// <summary>The run's assertions, in the order they were recorded.</summary>
     [Parameter] public IReadOnlyList<ScenarioAssertion> Assertions { get; set; } = [];
 
+    // The traces are stored as JSON arrays of message type names on the run row.
     private List<string> Expected => Parse(Run?.ExpectedTraceJson);
+    // ActualTraceJson is only filled when the run finishes; empty while running.
     private List<string> Actual => Parse(Run?.ActualTraceJson);
+    // JSON text → list of strings; null or "null" → empty list.
     private static List<string> Parse(string? json) => json is null ? [] : System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
 }

@@ -1,37 +1,76 @@
+@*
+    =================================================================================================
+     ServiceGraph.razor  —  the live architecture picture at the top of the Developer page
+    -------------------------------------------------------------------------------------------------
+     Architecture Explorer: the four projects + RabbitMQ.  Node colour AND text come from real health
+     polls; a dot travels along an edge only when a MessagePublished / MessageConsumed record of the
+     last few seconds exists for it.  Clicking a node filters the timeline below to that service.
+
+     What the student sees on screen:
+       An SVG drawing: Web, Orders, Inventory and Payments around RabbitMQ in the middle.  Every
+       service has an edge TO the broker (it publishes) and one FROM the broker (it consumes), plus the
+       single synchronous HTTP edge Web → Orders (checkout).  Nodes are green / amber / red / grey by
+       health.  An edge lights up and a dot runs along it only while real messages flow: the message
+       colour (--msg) for commands, green for events, purple for compensation, red for failures.
+       (Users who ask their OS for reduced motion get the coloured edges but no moving dots; see app.css.)  Below the drawing: a
+       colour legend and every RabbitMQ queue with ready / unacked / consumers.
+
+     Honesty rule: nothing here is a scripted animation.  If no MessagePublished / MessageConsumed
+     record was received in the last 4 seconds, the edge stays still.
+
+     Data sources:
+       Health and queues: ServiceHealthMonitor (polls /health/ready of each service and the RabbitMQ
+       management API).  Edge activity: the Recent parameter = latest audit records from the Web's
+       read model, passed in by DeveloperPage.
+
+     Read next: Developer/TimelineView.razor.
+    =================================================================================================
+*@
+@* Health: latest health/queue answers (singleton, kept in memory).  Clients: injected, not used here. *@
 @inject ServiceHealthMonitor Health
 @inject ServiceClients Clients
 
-@*
-    Architecture Explorer: the four projects + RabbitMQ.  Node colour AND text come from real health
-    polls; a dot travels along an edge only when a MessagePublished / MessageConsumed record of the
-    last few seconds exists for it.  Clicking a node filters the timeline below to that service.
-*@
+@* graph-wrap / graph: sized in app.css so the drawing scales with the panel width. *@
 <div class="graph-wrap">
+    @* viewBox = the internal coordinate system (640 × 300).  All X/Y below are in these units and the
+       browser scales the whole picture to the available width. *@
     <svg viewBox="0 0 640 300" class="graph" role="img" aria-label="service graph">
+        @* 1) Edges first, so nodes are drawn ON TOP of the lines (SVG paints in document order).
+              An active edge gets the class of its message kind (command / event / comp / failure). *@
         @foreach (var e in Edges)
         {
             <line x1="@e.From.X" y1="@e.From.Y" x2="@e.To.X" y2="@e.To.Y" class="edge @(e.Active ? e.Kind : "")" />
         }
+        @* 2) A moving dot on each ACTIVE edge.  <animateMotion> is plain SVG animation done by the
+              browser (no JavaScript): it moves the circle along the path "M from L to" every 1.2 s. *@
         @foreach (var e in Edges.Where(e => e.Active))
         {
             <circle r="5" class="dot @e.Kind">
                 <animateMotion dur="1.2s" repeatCount="indefinite" path="M@(e.From.X),@(e.From.Y) L@(e.To.X),@(e.To.Y)" />
             </circle>
         }
+        @* 3) Nodes: a rounded rectangle with the name and the health status text. *@
         @foreach (var n in Nodes)
         {
+            // Latest health answer for this node (null = never polled yet).
             var status = Health.Nodes.GetValueOrDefault(n.Name);
+            // CSS class: unknown (grey), down (red), degraded (amber) or up (green).
             var cls = status is null ? "unknown" : status.Up ? (status.Status == "Degraded" ? "degraded" : "up") : "down";
+            @* Clicking raises OnSelect with the node name; the parent filters the timeline by service. *@
             <g class="node @cls @(Selected == n.Name ? "selected" : "")" @onclick="() => OnSelect.InvokeAsync(n.Name)" style="cursor:pointer">
+                @* The rectangle is 116 × 52, centred on the node's (X, Y). *@
                 <rect x="@(n.X - 58)" y="@(n.Y - 26)" width="116" height="52" rx="10" />
                 <text x="@n.X" y="@(n.Y - 4)" text-anchor="middle" class="label">@n.Name</text>
                 <text x="@n.X" y="@(n.Y + 14)" text-anchor="middle" class="status">@(status?.Status ?? "…")</text>
             </g>
         }
     </svg>
+    @* ---- legend + RabbitMQ queues ---------------------------------------------------------------- *@
     <div class="legend">
         <span class="kind command">command</span> <span class="kind event">event</span> <span class="kind comp">compensation</span>
         <span class="kind failure">retry/failure</span>
+        @* One chip per queue: name without the "minishop." prefix, then ready / unacked / consumers.
+           ready = waiting to be delivered (backlog); unacked = delivered but not finished yet. *@
         @foreach (var q in Health.Queues)
         {
             <span class="queue" title="ready / unacked / consumers">@q.Name.Replace("minishop.", "") <b>@q.Ready</b>/@q.Unacked/@q.Consumers</span>
@@ -42,12 +81,17 @@
 @code {
     /// <summary>Records from the last few seconds; used to animate the edges.</summary>
     [Parameter] public IReadOnlyList<EventAudit> Recent { get; set; } = [];
+    /// <summary>The node currently used as timeline filter (highlighted), or null.</summary>
     [Parameter] public string? Selected { get; set; }
+    /// <summary>Raised with the node name when a node is clicked (EventCallback = child → parent notification).</summary>
     [Parameter] public EventCallback<string> OnSelect { get; set; }
 
+    // A node: name (also the service name in audit records) and its centre in SVG units.
     private sealed record Node(string Name, int X, int Y);
+    // An edge between two nodes; Active = real traffic in the last seconds; Kind = CSS colour class.
     private sealed record Edge(Node From, Node To, bool Active, string Kind);
 
+    // Fixed layout: Web on the left, broker in the middle, owners on the right.
     private static readonly Node Web = new("Web", 90, 150);
     private static readonly Node Orders = new("Orders", 320, 60);
     private static readonly Node Broker = new("RabbitMQ", 320, 150);
@@ -55,32 +99,43 @@
     private static readonly Node Payments = new("Payments", 550, 240);
     private static readonly Node[] Nodes = [Web, Orders, Broker, Inventory, Payments];
 
+    // Recomputed on every render, so the edges follow the newest Recent records and the clock.
     private List<Edge> Edges => BuildEdges();
 
+    /// <summary>Builds all edges and decides which are active from the real audit records.</summary>
     private List<Edge> BuildEdges()
     {
         var edges = new List<Edge>();
+        // Only records RECEIVED by the Web in the last 4 seconds count as "flowing now".
         var since = DateTime.UtcNow.AddSeconds(-4);
         var recent = Recent.Where(r => r.RecordedAtUtc >= since).ToList();
 
         foreach (var node in new[] { Web, Orders, Inventory, Payments })
         {
+            // node → broker is active when the node PUBLISHED something.
             var published = recent.Where(r => r.Kind == "MessagePublished" && r.Service == node.Name).ToList();
+            // broker → node is active when the node RECEIVED something (successfully, failing, or as a duplicate).
             var consumed = recent.Where(r => r.Kind is "MessageConsumed" or "ConsumerFailed" or "InboxDuplicateIgnored" && r.Service == node.Name).ToList();
             edges.Add(new Edge(node, Broker, published.Count > 0, KindOf(published)));
             edges.Add(new Edge(Broker, node, consumed.Count > 0, KindOf(consumed)));
         }
         // the one synchronous call: Web → Orders (POST /api/orders)
+        // (approximated by a recent StateSnapshot from Orders: the checkout endpoint emits one, "order created")
         edges.Add(new Edge(Web, Orders, recent.Any(r => r.Kind == "StateSnapshot" && r.Service == "Orders"), "command"));
         return edges;
     }
 
+    /// <summary>Colour of an edge from the records that made it active (worst case wins).</summary>
     private static string KindOf(List<EventAudit> records)
     {
+        // Any failure → red.
         if (records.Any(r => r.Kind is "ConsumerFailed")) return "failure";
         var types = records.Select(r => r.SubjectMessageType ?? "").ToList();
+        // Any compensation message → purple.
         if (types.Any(t => t is "ReleaseStock" or "CancelPayment" or "StockReleased" or "PaymentFailed" or "PaymentCancelled" or "OrderRejected")) return "comp";
+        // Any command of the happy path → command colour.
         if (types.Any(t => t is "ReserveStock" or "ChargeWallet")) return "command";
+        // Otherwise a normal event.
         return "event";
     }
 }

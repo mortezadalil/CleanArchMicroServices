@@ -1,6 +1,26 @@
+@*
+    =================================================================================================
+     OrdersPage.razor  —  "My Orders" ("/orders")
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       A table of this customer's orders: short id (link to the order page), creation time, amount,
+       a coloured state badge, the last event that changed it, and an "Inspect flow" button that opens
+       the Developer page focused on that order.
+
+     Data source:
+       The Web's read model only (readmodel.db, Orders projection), through ReadModelQueries.
+       The rows are built from events (OrderPlaced, OrderConfirmed, ...); they are NOT read from
+       orders.db.  So a state can lag a moment behind the Orders service: eventual consistency.
+
+     Live updates: inherits LiveComponentBase, so new orders and state changes appear by themselves.
+
+     Read next: Pages/OrderDetailsPage.razor.
+    =================================================================================================
+*@
 @page "/orders"
 @inherits LiveComponentBase
 @inject ReadModelQueries Queries
+@* Cart is injected only for Cart.CustomerId: "my" orders = orders of this tab's customer. *@
 @inject CartService Cart
 
 <PageTitle>My Orders · MiniShop</PageTitle>
@@ -19,8 +39,10 @@ else
                 <td><a href="/orders/@o.OrderId"><code>@Fmt.Short(o.OrderId)</code></a></td>
                 <td>@Fmt.Time(o.CreatedAtUtc)</td>
                 <td>@Fmt.Money(o.Amount)</td>
+                @* Fmt.StateClass picks the badge colour (green / amber / red / purple). *@
                 <td><span class="@Fmt.StateClass(o.State)">@o.State</span></td>
                 <td class="muted small">@o.LastEvent</td>
+                @* Opens the Developer page with ?orderId=..., read there by [SupplyParameterFromQuery]. *@
                 <td><a class="btn small" href="/developer?orderId=@o.OrderId">Inspect flow</a></td>
             </tr>
         }
@@ -29,6 +51,8 @@ else
 }
 
 @code {
+    // The customer's orders, newest first (as returned by the query).
     private List<OrderSummary> _orders = [];
+    /// <summary>Reload the list from the read model (start-up and on every change notification).</summary>
     protected override async Task RefreshAsync() => _orders = await Queries.GetOrdersAsync(Cart.CustomerId);
 }

@@ -1,45 +1,84 @@
 @*
-    Saga Inspector: current state, history of transitions, deadline/compensation counters.
-    Everything comes from SagaTransitioned diagnostics emitted by the Orders service after each commit.
+    =================================================================================================
+     SagaInspector.razor  —  the order's saga (state machine) seen from the inside
+    -------------------------------------------------------------------------------------------------
+     Saga Inspector: current state, history of transitions, deadline/compensation counters.
+     Everything comes from SagaTransitioned diagnostics emitted by the Orders service after each commit.
+
+     What the student sees on screen:
+       * the current saga state and how many transitions happened,
+       * a row of "state chips" for every state of the saga: the current one highlighted, the ones
+         already visited marked, the others grey — a tiny state chart,
+       * the list of transitions with their time and detail text ("WaitingForStock → WaitingForPayment ..."),
+       * the persisted saga/order row after the last transition (collapsible),
+       * when the saga is stuck in RequiresAttention: a "retry compensation" button.
+
+     Data source:
+       Parameters only, filled by DeveloperPage from the Web's read model: a SagaSnapshot projection
+       and the order's event audit.  Orders sends those records AFTER it committed the saga row, so
+       the inspector never shows a state that was not really stored in orders.db.
+
+     Read next: Developer/OutboxInboxInspector.razor.
+    =================================================================================================
 *@
 <div class="panel">
     <h3>Saga Inspector</h3>
+    @* Three cases: no order selected / order selected but no saga record yet / saga known. *@
     @if (OrderId is null) { <p class="muted">Select an order (from the timeline or My Orders → Inspect flow).</p> }
     else if (Saga is null) { <p class="muted">No saga snapshot for @Fmt.Short(OrderId) yet.</p> }
     else
     {
         <p>Order <code>@Fmt.Short(OrderId)</code> · state <span class="@Fmt.StateClass(Saga.CurrentState)">@Saga.CurrentState</span> · @Saga.Transitions transition(s)</p>
+        @* ---- mini state chart: one chip per known state ------------------------------------------- *@
         <div class="statechart">
             @foreach (var s in States)
             {
+                @* class "current" (highlighted), "visited" (seen in the transition history) or none. *@
                 <span class="state @(s == Saga.CurrentState ? "current" : Visited.Contains(s) ? "visited" : "")">@s</span>
             }
         </div>
+        @* ---- transition history --------------------------------------------------------------------- *@
         <ol class="steps">
             @foreach (var t in Transitions)
             {
                 <li><small class="mono muted">@Fmt.Time(t.OccurredAtUtc)</small> @t.Detail</li>
             }
         </ol>
+        @* The raw row Orders persisted (pretty-printed JSON); TimelineView.Pretty is a shared static helper. *@
         @if (Saga.SnapshotJson is not null) { <details><summary>persisted saga/order row (after last transition)</summary><pre>@TimelineView.Pretty(Saga.SnapshotJson)</pre></details> }
+        @* ---- operator action for a stuck compensation (see scenario S12) ----------------------------- *@
         @if (Saga.CurrentState == "RequiresAttention")
         {
+            @* The button does not call a service itself: it raises the OnRetry EventCallback and the
+               PARENT (DeveloperPage) performs the call.  OrderId!.Value: "!" tells the compiler it is not
+               null here (we are inside the "else" branch). *@
             <p class="hint">Compensation was not confirmed after the allowed attempts. Remove the cause, then <button class="btn small" @onclick="() => OnRetry.InvokeAsync(OrderId!.Value)">retry compensation</button>.</p>
         }
     }
 </div>
 
 @code {
+    /// <summary>The selected order (null = none).</summary>
     [Parameter] public Guid? OrderId { get; set; }
+    /// <summary>The latest saga snapshot from the read model (null = no record yet).</summary>
     [Parameter] public SagaSnapshot? Saga { get; set; }
+    /// <summary>The order's audit records; this component only uses the SagaTransitioned ones.</summary>
     [Parameter] public IReadOnlyList<EventAudit> Timeline { get; set; } = [];
+    /// <summary>
+    /// Raised when the operator clicks "retry compensation".  An EventCallback is Blazor's way for a
+    /// child to notify its parent; after the parent's handler runs, Blazor re-renders the parent.
+    /// </summary>
     [Parameter] public EventCallback<Guid> OnRetry { get; set; }
 
+    // All states of the Orders saga, in a readable order: happy path first, then the unhappy ones.
     private static readonly string[] States =
         ["Started", "WaitingForStock", "WaitingForPayment", "Completed", "WaitingForPaymentCancellation", "WaitingForRelease", "Rejected", "RequiresAttention"];
 
+    // Possible separators inside a transition's detail text, e.g. "WaitingForStock → WaitingForPayment: ...".
     private static readonly string[] Separators = [" → ", "→", ":"];
+    // Only the transition records of the timeline.
     private IEnumerable<EventAudit> Transitions => Timeline.Where(e => e.Kind == "SagaTransitioned");
+    // Every known state name that appears in any transition detail = states the saga has been in.
     private HashSet<string> Visited => Transitions.SelectMany(t => (t.Detail ?? "").Split(Separators, StringSplitOptions.None).Select(x => x.Trim()))
         .Where(States.Contains).ToHashSet();
 }

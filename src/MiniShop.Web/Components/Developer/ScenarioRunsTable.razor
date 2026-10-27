@@ -1,3 +1,21 @@
+@*
+    =================================================================================================
+     ScenarioRunsTable.razor  —  history of Scenario Lab runs
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen:
+       One row per run: start time, code, title, verdict badge (PASSED / FAILED / INCONCLUSIVE /
+       Running), the scenario's order, how many deliveries consumers received, how many duplicates an
+       Inbox ignored, and a "report" link to /developer/scenarios/{runId}.
+
+     Data source:
+       Only the Runs parameter, loaded by the parent (DeveloperPage) from the Web's read model.
+
+     A "presentational" component: no injected services, no own data loading.  The parent decides
+     what to show; this component only decides how.
+
+     Read next: Developer/SagaInspector.razor.
+    =================================================================================================
+*@
 <table class="table compact">
     <thead><tr><th>Started</th><th>Code</th><th>Scenario</th><th>Status</th><th>Order</th><th>Attempts</th><th>Dedup</th><th></th></tr></thead>
     <tbody>
@@ -5,8 +23,10 @@
     {
         <tr>
             <td class="small">@Fmt.Time(r.StartedAtUtc)</td><td>@r.Code</td><td>@r.Title</td>
+            @* Badge colour from Fmt.StateClass: PASSED green, FAILED red, INCONCLUSIVE amber. *@
             <td><span class="@Fmt.StateClass(r.Status)">@r.Status</span></td>
             <td class="mono small">@(r.OrderId is null ? "—" : Fmt.Short(r.OrderId))</td>
+            @* Attempts = MessageConsumed records; Dedup = InboxDuplicateIgnored records (see ScenarioRunner.FinishAsync). *@
             <td>@r.DeliveryAttempts</td><td>@r.DedupHits</td>
             <td><a class="btn small" href="/developer/scenarios/@r.Id">report</a></td>
         </tr>
@@ -16,5 +36,6 @@
 @if (Runs.Count == 0) { <p class="muted small">no runs yet</p> }
 
 @code {
+    /// <summary>The runs to list, newest first (set by the parent component).</summary>
     [Parameter] public IReadOnlyList<ScenarioRun> Runs { get; set; } = [];
 }

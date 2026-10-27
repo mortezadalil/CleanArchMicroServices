@@ -1,22 +1,48 @@
+@*
+    =================================================================================================
+     FaultPanel.razor  —  "break the system on purpose" buttons and the list of active fault rules
+    -------------------------------------------------------------------------------------------------
+     Demo Control Plane: the named controls of the specification, each mapped to a real activation point.
+     Rules are scoped (service + point), limited (hits) and expire automatically; "Clear all" removes them everywhere.
+
+     How a fault works:
+       Each service has a small in-memory FaultRegistry and calls it at a few named "activation
+       points" in its real code (e.g. Payments.ChargeWallet inside the ChargeWallet consumer, or
+       Outbox.Dispatch inside the outbox dispatcher).  A button here sends a FaultRule to that
+       service's Development-only /demo/faults endpoint.  The next matching message then fails, is
+       delayed, paused, rejected or duplicated AT THAT POINT, and the service records a FaultInjected
+       telemetry record so the timeline shows exactly where it fired.  Nothing is simulated in the UI.
+
+     What the student sees on screen:
+       One button per named control (tooltip = what it does), "Clear all faults", a confirmation
+       message, and a table of active rules per service (point, kind, hits left / hits so far,
+       global or scenario scope, expiry, ✕ to remove).
+
+     Data source:
+       Each service's own fault endpoints over HTTP (ServiceClients).  No database involved: rules
+       live in the memory of the service that applies them.
+
+     Read next: Developer/ServiceGraph.razor.
+    =================================================================================================
+*@
 @inject ServiceClients Clients
 @using MiniShop.Shared.Faults
 
-@*
-    Demo Control Plane: the named controls of the specification, each mapped to a real activation point.
-    Rules are scoped (service + point), limited (hits) and expire automatically; "Clear all" removes them everywhere.
-*@
 <div class="panel">
     <h3>Fault injection</h3>
     <p class="muted small">Each button registers a rule inside the target service; the next matching message triggers it and a <code>FaultInjected</code> record appears in the timeline.</p>
+    @* ---- the buttons ---------------------------------------------------------------------------------- *@
     <div class="fault-buttons">
         @foreach (var c in Controls)
         {
+            @* "() => Arm(c)": each button's lambda captures its own control c (foreach creates a new c per iteration). *@
             <button class="btn small" title="@c.Description" @onclick="() => Arm(c)">@c.Name</button>
         }
         <button class="btn small danger" @onclick="ClearAll">Clear all faults</button>
     </div>
     @if (_message is not null) { <p class="hint">@_message</p> }
 
+    @* ---- active rules, as reported by each service ------------------------------------------------------ *@
     <h4>Active rules</h4>
     @if (_rules.All(r => r.Value.Count == 0)) { <p class="muted small">none</p> }
     else
@@ -24,13 +50,16 @@
         <table class="table compact">
             <thead><tr><th>Service</th><th>Point</th><th>Kind</th><th>Hits left</th><th>Scope</th><th>Expires</th><th></th></tr></thead>
             <tbody>
+            @* Outer loop: services (tuple deconstruction of each dictionary entry); inner loop: their rules. *@
             @foreach (var (service, rules) in _rules)
             {
                 @foreach (var r in rules)
                 {
                     <tr>
                         <td>@service</td><td class="mono">@r.ActivationPoint</td><td>@r.Kind @(r.Kind == FaultKind.Delay ? $"{r.DelayMs}ms" : "")</td>
+                        @* RemainingHits null = fires until removed (∞); Hits = how often it already fired. *@
                         <td>@(r.RemainingHits?.ToString() ?? "∞") (hit @r.Hits×)</td>
+                        @* Rules armed here are "global"; rules armed by a scenario only affect that scenario's messages. *@
                         <td class="mono small">@(r.ScenarioId is null ? "global" : $"scenario {Fmt.Short(r.ScenarioId)}")</td>
                         <td class="small">@(r.ExpiresAtUtc is null ? "—" : Fmt.Time(r.ExpiresAtUtc.Value))</td>
                         <td><button class="ghost" @onclick="() => Remove(service, r.Id)">✕</button></td>
@@ -43,8 +72,15 @@
 </div>
 
 @code {
+    /// <summary>
+    /// One named control: button text, target service, activation point, fault kind, description,
+    /// how many times it fires (null = until cleared) and, for Delay, the delay in milliseconds.
+    /// </summary>
     private sealed record Control(string Name, string Service, string Point, FaultKind Kind, string Description, int? Hits = 1, int DelayMs = 0);
 
+    // The control list.  Each entry maps a friendly name to a REAL activation point in a service.
+    // Kinds: Reject = a business "no" (e.g. PaymentFailed); Fail = an exception (retry / error queue);
+    // Delay = wait first; Pause = hold the message until the rule is removed; Duplicate = publish twice.
     private static readonly Control[] Controls =
     [
         new("FailNextPayment", ServiceNames.Payments, FaultPoints.PaymentsCharge, FaultKind.Reject, "Decline the next ChargeWallet (PaymentFailed → compensation)"),
@@ -60,32 +96,42 @@
         new("CrashAfterPublish", ServiceNames.Orders, FaultPoints.OutboxAfterPublish, FaultKind.Fail, "Crash after publish, before mark-as-published (redelivery)"),
     ];
 
+    // Active rules per service, as last reported by the services.
     private Dictionary<string, IReadOnlyList<FaultRule>> _rules = new();
+    // Feedback line under the buttons.
     private string? _message;
 
+    /// <summary>Load the active rules once when the panel appears.</summary>
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
+    /// <summary>Asks every service (including the Web itself) for its active rules.</summary>
     public async Task LoadAsync()
     {
         foreach (var service in new[] { ServiceNames.Orders, ServiceNames.Inventory, ServiceNames.Payments, ServiceNames.Web })
             _rules[service] = await Clients.ListFaultsAsync(service);
     }
 
+    /// <summary>Button click: send the rule to the target service, then reload the list.</summary>
     private async Task Arm(Control c)
     {
         try
         {
+            // No ScenarioId → a GLOBAL rule: the next matching message of ANY order triggers it.
             await Clients.AddFaultAsync(c.Service, new FaultRule
             {
                 ActivationPoint = c.Point, Kind = c.Kind, RemainingHits = c.Hits, DelayMs = c.DelayMs,
+                // Safety net: a forgotten rule disappears by itself after 5 minutes.
                 Description = c.Description, ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
             });
             _message = $"{c.Name} armed in {c.Service}: {c.Description}";
         }
+        // The service may be down (that is often what the student is experimenting with).
         catch (Exception ex) { _message = $"could not reach {c.Service}: {ex.Message}"; }
         await LoadAsync();
     }
 
+    /// <summary>✕ on a row: remove that one rule from its service.</summary>
     private async Task Remove(string service, Guid id) { await Clients.RemoveFaultAsync(service, id); await LoadAsync(); }
+    /// <summary>Remove every rule (global and scenario-scoped) from every service.</summary>
     private async Task ClearAll() { await Clients.RemoveFaultsEverywhereAsync(null); _message = "all rules removed"; await LoadAsync(); }
 }

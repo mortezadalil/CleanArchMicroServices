@@ -1,27 +1,53 @@
+@*
+    =================================================================================================
+     TimelineView.razor  —  the event timeline table of the Developer page
+    -------------------------------------------------------------------------------------------------
+     Event Timeline: append-only records with real timestamps.  Click a row to open its details in place (right under the row): ids (with copy),
+     publisher/handler, attempt, duration, outcome, error and the payload / snapshot JSON.
+
+     What the student sees on screen:
+       One row per telemetry record: time, service, kind (coloured by Fmt.KindClass), the message
+       type it is about, a detail text and the delivery attempt.  Failed rows are red.  Clicking a row
+       opens an extra row RIGHT UNDER IT with every id (messageId, correlationId = order id,
+       causationId = the message that caused this one), timings, the error, an explanation for
+       failures / faults, and the message payload and state snapshot as pretty JSON.  Clicking again
+       closes it.
+
+     Data source:
+       Only the Events parameter, which DeveloperPage loads from the Web's read model (EventAudit
+       table).  Every service sends these records over RabbitMQ; the Web stores them append-only.
+
+     Read next: Developer/SagaInspector.razor.
+    =================================================================================================
+*@
+@* IJSRuntime: used only to call the "copy to clipboard" helper defined in App.razor. *@
 @inject IJSRuntime JS
 
-@*
-    Event Timeline: append-only records with real timestamps.  Click a row to open its details in place (right under the row): ids (with copy),
-    publisher/handler, attempt, duration, outcome, error and the payload / snapshot JSON.
-*@
 <div class="timeline">
     <table class="table compact">
         <thead><tr><th></th><th>Time</th><th>Service</th><th>Kind</th><th>Subject</th><th>Detail</th><th>Att.</th></tr></thead>
         <tbody>
         @foreach (var e in Events)
         {
+            // Is this the row whose details are open?  Compared by Seq (the record's unique sequence number).
             var isOpen = Selected?.Seq == e.Seq;
+            @* @key tells Blazor's diffing which <tr> is which.  New records are inserted at the top; without
+               a key Blazor would match rows by position and re-render (or mix up) every row.  With the key it
+               only inserts the new rows and the open details stay attached to the right record. *@
             <tr @key="e.Seq" class="@(isOpen ? "selected" : "") @(e.Outcome == "Failed" ? "failed" : "")" @onclick="() => Select(e)"
                 title="@(isOpen ? "click to close" : "click to open the details")">
                 <td class="chevron">@(isOpen ? "▾" : "▸")</td>
                 <td class="mono">@Fmt.Time(e.OccurredAtUtc)</td>
                 <td>@e.Service</td>
                 <td><span class="@Fmt.KindClass(e.Kind)">@e.Kind</span></td>
+                @* Subject: the message type the record is about; business records ARE the message, so show their kind. *@
                 <td class="mono">@(e.SubjectMessageType ?? (e.Category == "Business" ? e.Kind : ""))</td>
                 <td class="detail">@e.Detail</td>
                 <td>@(e.Attempt > 0 ? e.Attempt.ToString() : "")</td>
             </tr>
-            @* The details open IN PLACE, as an extra row right under the clicked row. *@
+            @* The details open IN PLACE, as an extra row right under the clicked row.
+               Its single cell has colspan="7" (spans the whole table width) and renders the Details
+               fragment defined in @code below. *@
             @if (isOpen)
             {
                 <tr @key="-e.Seq" class="detail-row">   @* negative Seq: a key that never collides with a data row *@
@@ -35,10 +61,18 @@
 </div>
 
 @code {
+    /// <summary>The records to show (already filtered and ordered by the parent).</summary>
     [Parameter] public IReadOnlyList<EventAudit> Events { get; set; } = [];
+    /// <summary>The record whose details are open (null = none).</summary>
     [Parameter] public EventAudit? Selected { get; set; }
+    /// <summary>
+    /// Raised when the open record changes.  The name pattern "X" + "XChanged" lets the parent write
+    /// @bind-Selected="..." (two-way binding between components), so the parent always knows the
+    /// selected record (e.g. to focus the saga inspector on its order).
+    /// </summary>
     [Parameter] public EventCallback<EventAudit?> SelectedChanged { get; set; }
 
+    /// <summary>Row click: open it, or close it when it was already open; then tell the parent.</summary>
     private async Task Select(EventAudit e)
     {
         Selected = Selected?.Seq == e.Seq ? null : e;
@@ -46,21 +80,33 @@
     }
 
     /// <summary>The detail panel of one record (ids with copy, attempt, error, payload, snapshot).</summary>
+    /// <remarks>
+    /// A RenderFragment is "a piece of UI as a value": a delegate that writes markup into the render
+    /// tree.  "__builder" is the name the Razor compiler expects for the RenderTreeBuilder, which lets
+    /// us write normal markup inside this C# lambda.
+    /// </remarks>
     private RenderFragment Details(EventAudit e) => __builder =>
     {
         <div class="detail-panel inline">
             <h4>@e.Kind <small class="muted">#@e.Seq · @e.Category</small></h4>
+            @* A definition list (<dl>): term (<dt>) and value (<dd>) pairs, laid out as a grid in app.css. *@
             <dl>
+                @* messageId: unique id of the message; the Inbox de-duplicates on it. *@
                 <dt>messageId</dt><dd class="mono">@e.MessageId <button class="ghost" @onclick="() => Copy(e.MessageId.ToString())">copy</button></dd>
+                @* correlationId: the order id; every message of one order's saga carries it. *@
                 <dt>correlationId (order)</dt><dd class="mono">@e.CorrelationId <button class="ghost" @onclick="() => Copy(e.CorrelationId.ToString())">copy</button> <a href="/orders/@e.CorrelationId">open order</a></dd>
+                @* causationId: the id of the message that caused this one (builds the cause → effect chain). *@
                 <dt>causationId</dt><dd class="mono">@(e.CausationId?.ToString() ?? "—")</dd>
                 <dt>subject</dt><dd class="mono">@e.SubjectMessageType @e.SubjectMessageId</dd>
                 <dt>scenarioId</dt><dd class="mono">@(e.ScenarioId?.ToString() ?? "—")</dd>
                 <dt>producer / handler</dt><dd>@e.Service</dd>
                 <dt>attempt · duration · outcome</dt><dd>@e.Attempt · @(e.DurationMs is null ? "—" : $"{e.DurationMs:0} ms") · @(e.Outcome ?? "—")</dd>
                 @if (e.Error is not null) { <dt>error</dt><dd class="error">@e.Error</dd> }
+                @* occurred = clock of the service that did it; recorded = when the Web stored it.  The
+                   difference shows how long telemetry travelled. *@
                 <dt>occurred / recorded</dt><dd>@Fmt.Time(e.OccurredAtUtc) / @Fmt.Time(e.RecordedAtUtc)</dd>
             </dl>
+            @* For failures and injected faults: a plain-language explanation of what happens next. *@
             @if (e.Kind is "ConsumerFailed" or "MessageDeadLettered" or "RetryScheduled" or "FaultInjected")
             {
                 <p class="hint"><b>Why &amp; expected action:</b> @Explain(e)</p>
@@ -70,8 +116,13 @@
         </div>
     };
 
+    /// <summary>"copy" button: calls window.miniShop.copy(text) in the browser through IJSRuntime.</summary>
     private async Task Copy(string text) => await JS.InvokeVoidAsync("miniShop.copy", text);
 
+    /// <summary>
+    /// Re-indents a JSON string for display.  Public and static so other developer components
+    /// (saga inspector, database explorer, replay) reuse it.  Invalid JSON is shown unchanged.
+    /// </summary>
     public static string Pretty(string json)
     {
         try
@@ -82,6 +133,7 @@
         catch { return json; }
     }
 
+    /// <summary>Why a failure-type record happened and what the system will do about it.</summary>
     private static string Explain(EventAudit e) => e.Kind switch
     {
         "ConsumerFailed" => "The handler threw before commit, so nothing was written. MassTransit re-delivers the message after a short delay; the Inbox makes the retry safe.",

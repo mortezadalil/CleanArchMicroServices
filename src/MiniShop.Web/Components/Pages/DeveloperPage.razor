@@ -1,5 +1,37 @@
+@*
+    =================================================================================================
+     DeveloperPage.razor  —  the Developer Console ("/developer"): the system seen from the inside
+    -------------------------------------------------------------------------------------------------
+     What the student sees on screen (top to bottom):
+       1. Toolbar: pick a Scenario Lab scenario (S01..S16) and run it, a "running…" badge, a reset
+          button, the selected scenario's summary/lesson/requirement, and the current CONTEXT
+          (inspected order, scenario, service filter) with "clear" buttons.
+       2. A two-column grid: the live service graph (left) and the saga inspector + last scenario
+          verdict (right).
+       3. Tabs: Timeline, Messages, Outbox/Inbox, Database, CQRS, Replay, Faults, Scenario runs.
+          Only the active tab's component exists; switching tabs creates it fresh.
+
+     Context and URL:
+       ?orderId=... and ?scenarioId=... in the URL choose what to inspect (links from My Orders,
+       the order page and the scenario report use them).  Running a scenario rewrites the URL to
+       ?scenarioId=<new run>, so a page reload keeps the context.
+
+     Data sources:
+       The Web's read model (event audit, saga snapshots, scenario runs) through ReadModelQueries;
+       the child components add the owners' read-only diagnostics endpoints.  Never another
+       service's database.
+
+     Live updates:
+       Inherits LiveComponentBase: whenever telemetry, a projection, health or a scenario changes,
+       RefreshAsync reloads everything (debounced) and Blazor pushes the new HTML over SignalR.
+
+     Read next: Developer/ServiceGraph.razor, then the other components in Components/Developer/.
+    =================================================================================================
+*@
 @page "/developer"
 @inherits LiveComponentBase
+@* Queries: read model.  Runner: starts scenarios (singleton).  Clients: other services over HTTP.
+   Nav: rewrite the URL.  Reset: demo reset.  JS: browser confirm() dialog. *@
 @inject ReadModelQueries Queries
 @inject ScenarioRunner Runner
 @inject ServiceClients Clients
@@ -9,20 +41,25 @@
 
 <PageTitle>Developer Console · MiniShop</PageTitle>
 
+@* ==== 1. toolbar ================================================================================= *@
 <div class="dev-toolbar">
     <h1>Developer Console</h1>
     <div class="row">
+        @* Scenario picker: @bind stores the chosen <option> value (the code, e.g. "S04") in _scenarioCode. *@
         <select @bind="_scenarioCode">
             @foreach (var s in ScenarioCatalog.All) { <option value="@s.Code">@s.Code — @s.Title</option> }
         </select>
+        @* Disabled while ANY scenario runs: the runner executes one scenario at a time. *@
         <button class="primary" disabled="@(Runner.RunningId is not null)" @onclick="RunScenario">▶ Run</button>
         @if (Runner.RunningId is { } running) { <span class="badge pending">running @_runs.FirstOrDefault(r => r.Id == running)?.Code …</span> }
         <button class="btn small danger" @onclick="ResetAll" title="reset every database to the seed and remove all faults">Reset demo data</button>
     </div>
+    @* Static description of the selected scenario (from ScenarioCatalog), shown before running it. *@
     @if (SelectedScenario is { } sd)
     {
         <p class="muted small"><b>@sd.Code</b> @sd.Summary <i>Lesson:</i> @sd.Lesson @(sd.Requirement is null ? "" : $"⚠ {sd.Requirement}")</p>
     }
+    @* The current inspection context; each "clear" button widens the view again. *@
     <div class="context">
         <span>order: <code>@(_orderId?.ToString() ?? "none")</code></span>
         @if (_orderId is not null) { <a href="/orders/@_orderId">store view</a> <button class="ghost" @onclick="() => SetOrder(null)">clear</button> }
@@ -33,12 +70,17 @@
     </div>
 </div>
 
+@* ==== 2. graph + inspectors ======================================================================== *@
+@* dev-grid: two columns on wide screens, one on narrow screens (see app.css). *@
 <div class="dev-grid">
     <section class="graph-area">
         <h3>Architecture Explorer</h3>
+        @* Child component with parameters.  OnSelect is an EventCallback: clicking a node calls this
+           lambda in THIS page, which toggles the service filter (click again to remove it). *@
         <ServiceGraph Recent="_recent" Selected="@_service" OnSelect="s => _service = _service == s ? null : s" />
     </section>
     <aside class="inspector-area">
+        @* The saga of the inspected order; its "retry compensation" button calls RetryCompensation here. *@
         <SagaInspector OrderId="_orderId" Saga="_saga" Timeline="_orderTimeline" OnRetry="RetryCompensation" />
         @if (_latestRun is not null)
         {
@@ -50,21 +92,29 @@
     </aside>
 </div>
 
+@* ==== 3. tabs ======================================================================================= *@
 <nav class="tabs">
     @foreach (var t in Tabs) { <button class="@(_tab == t ? "active" : "")" @onclick="() => _tab = t">@t</button> }
 </nav>
 
 <section class="tab-body">
+    @* Only the selected case is rendered.  The other components do not exist at all, so a tab's data
+       is loaded when the tab is opened (their OnParametersSetAsync / OnInitializedAsync). *@
     @switch (_tab)
     {
         case "Timeline":
+            @* Order timeline (or all recent records when no order is selected), with local filters. *@
             <div class="row small">
                 <label><input type="checkbox" @bind="_showDiagnostics" /> show diagnostics</label>
+                @* @bind:event="oninput" updates _search on every key stroke instead of when leaving the box. *@
                 <input placeholder="search kind / detail" @bind="_search" @bind:event="oninput" />
             </div>
+            @* @bind-Selected: two-way binding to TimelineView's Selected / SelectedChanged pair, so the
+               open details row survives the page's live re-renders. *@
             <TimelineView Events="FilteredTimeline" @bind-Selected="_selectedEvent" />
             break;
         case "Messages":
+            @* The raw message trace from the read model, newest first, filtered by the query (server side). *@
             <p class="muted small">Every record, newest first. Filters: order, scenario, service (click a node), search.</p>
             <div class="row small"><input placeholder="search" @bind="_search" @bind:event="oninput" /></div>
             <TimelineView Events="_messages" @bind-Selected="_selectedEvent" />
@@ -91,27 +141,46 @@
 </section>
 
 @code {
+    // The tab names, in display order (also used as the values of _tab).
     private static readonly string[] Tabs = ["Timeline", "Messages", "Outbox/Inbox", "Database", "CQRS", "Replay", "Faults", "Scenario runs"];
 
+    // [SupplyParameterFromQuery] fills these properties from the URL's query string
+    // (/developer?orderId=...&scenarioId=...).  They are set again whenever the URL changes.
+    /// <summary>?orderId= from the URL: the order to inspect.</summary>
     [SupplyParameterFromQuery(Name = "orderId")] public Guid? QueryOrderId { get; set; }
+    /// <summary>?scenarioId= from the URL: the scenario run to follow.</summary>
     [SupplyParameterFromQuery(Name = "scenarioId")] public Guid? QueryScenarioId { get; set; }
 
+    // The current context.  Copied from the query parameters, but can also change by clicking (clear,
+    // running a scenario), which is why they are separate fields.
     private Guid? _orderId, _scenarioId;
+    // Service filter set by clicking a node in the graph (null = all services).
     private string? _service;
+    // Active tab, chosen scenario code, timeline filters.
     private string _tab = "Timeline";
     private string _scenarioCode = "S01";
     private bool _showDiagnostics = true;
     private string _search = "";
 
+    // _recent: last seconds of records (graph animation); _orderTimeline: all records of the inspected
+    // order; _messages: the filtered message trace for the "Messages" tab.
     private List<EventAudit> _recent = [], _orderTimeline = [], _messages = [];
+    // The inspected order's saga snapshot (read model).
     private SagaSnapshot? _saga;
+    // Latest scenario runs and the run shown in the verdict box, with its assertions.
     private List<ScenarioRun> _runs = [];
     private ScenarioRun? _latestRun;
     private List<ScenarioAssertion> _latestAssertions = [];
+    // The timeline row whose details are open (two-way bound to TimelineView).
     private EventAudit? _selectedEvent;
 
+    // Definition of the scenario chosen in the picker (for its description).
     private ScenarioDefinition? SelectedScenario => ScenarioCatalog.Find(_scenarioCode);
 
+    /// <summary>
+    /// Runs on first display AND every time the URL's query parameters change (e.g. clicking another
+    /// "Inspect flow" link while already on this page).  Takes over the URL context, then reloads.
+    /// </summary>
     protected override async Task OnParametersSetAsync()
     {
         if (QueryOrderId is not null) _orderId = QueryOrderId;
@@ -119,10 +188,13 @@
         await RefreshAsync();
     }
 
+    /// <summary>Reloads everything the page shows from the read model (called by LiveComponentBase too).</summary>
     protected override async Task RefreshAsync()
     {
+        // Up to 60 records of the last 6 seconds: the graph only animates the last 4 s of these.
         _recent = await Queries.GetRecentAsync(60, DateTime.UtcNow.AddSeconds(-6));
         _runs = await Queries.GetScenarioRunsAsync(20);
+        // Which run goes into the verdict box: the one from the context (if any), else the newest run.
         _latestRun = _scenarioId is { } sid ? _runs.FirstOrDefault(r => r.Id == sid) ?? (await Queries.GetScenarioRunAsync(sid)).Run : _runs.FirstOrDefault();
         if (_latestRun is not null)
         {
@@ -130,16 +202,23 @@
             // follow the running scenario: its first order becomes the inspected order
             if (_latestRun.OrderId is { } oid && (_orderId is null || _scenarioId == _latestRun.Id)) _orderId = oid;
         }
+        // Data that depends on the inspected order (empty when none is selected).
         _orderTimeline = _orderId is null ? [] : await Queries.GetOrderTimelineAsync(_orderId.Value);
         _saga = _orderId is null ? null : await Queries.GetSagaAsync(_orderId.Value);
+        // The filtered trace for the Messages tab (max 200 rows).
         _messages = await Queries.GetMessageTraceAsync(_orderId, _scenarioId, _service, null, _search, 200);
     }
 
+    /// <summary>
+    /// What the Timeline tab shows: the order's records oldest-first, or (no order selected) the
+    /// message trace reversed to oldest-first; then the local filters are applied in memory.
+    /// </summary>
     private IReadOnlyList<EventAudit> FilteredTimeline
     {
         get
         {
             IEnumerable<EventAudit> source = _orderId is null ? _messages.AsEnumerable().Reverse() : _orderTimeline;
+            // "show diagnostics" off: keep business events plus the two most instructive technical kinds.
             if (!_showDiagnostics) source = source.Where(e => e.Category == "Business" || e.Kind is "SagaTransitioned" or "FaultInjected");
             if (_service is not null) source = source.Where(e => e.Service == _service);
             if (!string.IsNullOrWhiteSpace(_search)) source = source.Where(e => e.Kind.Contains(_search, StringComparison.OrdinalIgnoreCase) || (e.Detail?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
@@ -147,16 +226,21 @@
         }
     }
 
+    /// <summary>"▶ Run": start the chosen scenario and switch the context to the new run.</summary>
     private async Task RunScenario()
     {
+        // null = another scenario is running (the button should already be disabled then).
         var run = await Runner.StartAsync(_scenarioCode);
         if (run is null) return;
         _scenarioId = run.Id;
+        // Forget the old order; RefreshAsync will pick the scenario's order as soon as it exists.
         _orderId = null;
+        // Put the run id into the URL (without a new history entry) so a reload keeps following it.
         Nav.NavigateTo($"/developer?scenarioId={run.Id}", replace: true);
         await RefreshAsync();
     }
 
+    /// <summary>"Reset demo data": confirm, reset all services, clear the context.</summary>
     private async Task ResetAll()
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Reset ALL data (orders, scenario runs, timeline, wallets, stock) to the initial seed?")) return;
@@ -166,7 +250,9 @@
         await RefreshAsync();
     }
 
+    // "clear" buttons of the context bar.
     private async Task SetOrder(Guid? id) { _orderId = id; await RefreshAsync(); }
     private async Task SetScenario(Guid? id) { _scenarioId = id; await RefreshAsync(); }
+    /// <summary>Called by SagaInspector's OnRetry: asks Orders to retry a stuck compensation (S12).</summary>
     private async Task RetryCompensation(Guid orderId) { await Clients.RetryCompensationAsync(orderId); await RefreshAsync(); }
 }
