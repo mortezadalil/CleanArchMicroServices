@@ -56,10 +56,14 @@ brew services start rabbitmq
 rabbitmq-plugins enable rabbitmq_management   # UI on :15672, also used by the Developer Console
 ```
 
-Open `MiniShop.slnx` in Rider. The shared run configurations in `.run/` appear under the **MiniShop**
-folder of the run-configuration selector: one per service (`Web (5100)`, `Orders (5101)`,
-`Inventory (5102)`, `Payments (5103)`) and the compound **MiniShop (all services)**. Pick the compound
-and press **Debug**: all four start under the debugger, breakpoints work in every service. Then open
+Open `MiniShop.slnx` in Rider. **MiniShop only works when all four services run together** (plus
+RabbitMQ), so the shared run configurations in `.run/` put one entry on top of the run-configuration
+selector: the compound **MiniShop - Run ALL services**. Pick it and press **Debug**: Web, Orders,
+Inventory and Payments start together under the debugger, breakpoints work in every service. The
+single-service entries (`Web only (5100)`, `Orders only (5101)`, ...) live in the folder
+*Single service only (needs the other 3 running)*: use them only to restart one service while the
+others keep running. Rider may also show its own auto-generated `MiniShop.<Service>` entries; they
+start one service each and can be deleted. Then open
 http://localhost:5100 (Inventory, Orders and Payments have no page at `/`, a 404 there is normal; use
 `/health/ready`).
 

@@ -1,0 +1,16 @@
+<component name="ProjectRunConfigurationManager">
+  <!-- THE configuration to run or debug MiniShop in Rider.
+       MiniShop is four microservices that only work TOGETHER: the Web calls Orders, and Orders, Inventory
+       and Payments exchange messages through RabbitMQ. Running one of them alone starts fine but does
+       nothing useful (e.g. Inventory alone answers 404 on "/" and no order can be placed).
+       This compound starts all four at once, each under the debugger:
+         Web 5100 (open this in the browser), Orders 5101, Inventory 5102, Payments 5103.
+       Prerequisite: RabbitMQ on localhost:5672, management UI on 15672 (Docker or `brew install rabbitmq`). -->
+  <configuration default="false" name="MiniShop - Run ALL services" type="CompoundRunConfigurationType">
+    <toRun name="Orders only (5101)" type="LaunchSettings" />
+    <toRun name="Inventory only (5102)" type="LaunchSettings" />
+    <toRun name="Payments only (5103)" type="LaunchSettings" />
+    <toRun name="Web only (5100)" type="LaunchSettings" />
+    <method v="2" />
+  </configuration>
+</component>

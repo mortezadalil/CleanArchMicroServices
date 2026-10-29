@@ -32,11 +32,17 @@ brew services start rabbitmq
 rabbitmq-plugins enable rabbitmq_management
 ```
 
-فایل `MiniShop.slnx` را در Rider باز کنید. پیکربندی‌های اجرای مشترک پوشهٔ `.run/` در فهرست Run
-زیر پوشهٔ **MiniShop** دیده می‌شوند: یکی برای هر سرویس و یک پیکربندی ترکیبی به نام
-**MiniShop (all services)**. همین را انتخاب کنید و **Debug** بزنید تا هر چهار سرویس با دیباگر بالا
+فایل `MiniShop.slnx` را در Rider باز کنید. **MiniShop فقط وقتی کار می‌کند که هر چهار سرویس با هم
+(به‌همراه RabbitMQ) اجرا شوند.** برای همین در بالای فهرست Run پیکربندی ترکیبی
+**MiniShop - Run ALL services** قرار دارد. همین را انتخاب کنید و **Debug** بزنید تا Web، Orders،
+Inventory و Payments هم‌زمان با دیباگر بالا
 بیایند. سپس http://localhost:5100 را باز کنید. سرویس‌های Orders، Inventory و Payments روی `/` صفحه‌ای
 ندارند و خطای ۴۰۴ آن‌جا طبیعی است؛ برای بررسی سلامت از `/health/ready` استفاده کنید.
+
+پیکربندی‌های تک‌سرویسی (مثل `Inventory only (5102)`) در پوشهٔ
+*Single service only (needs the other 3 running)* هستند و فقط برای ری‌استارت یک سرویس در حالی که
+سه سرویس دیگر در حال اجرا هستند به کار می‌آیند. اگر Rider خودش پیکربندی‌هایی مثل `MiniShop.Inventory`
+ساخته باشد، آن‌ها فقط یک سرویس را اجرا می‌کنند و می‌توانید حذفشان کنید.
 
 بدون داکر، سناریوی S09 فقط bus سرویس Orders را دوباره راه می‌اندازد و برای S04 خودتان RabbitMQ را با
 `brew services stop rabbitmq` متوقف و با `brew services start rabbitmq` دوباره روشن کنید.

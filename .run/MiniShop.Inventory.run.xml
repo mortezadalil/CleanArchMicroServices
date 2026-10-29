@@ -1,8 +1,11 @@
 <component name="ProjectRunConfigurationManager">
   <!-- Shared JetBrains Rider run configuration (committed on purpose, .idea/ is not).
-       Runs src/MiniShop.Inventory with its launch profile: ASPNETCORE_ENVIRONMENT=Development, http://localhost:5102.
-       Needs RabbitMQ on localhost:5672 (Docker or a native install). See README "Option C". -->
-  <configuration default="false" name="Inventory (5102)" type="LaunchSettings" factoryName=".NET Launch Settings Profile" folderName="MiniShop">
+       Starts ONLY src/MiniShop.Inventory (launch profile: Development, http://localhost:5102).
+       MiniShop is four services that work only TOGETHER (+ RabbitMQ on localhost:5672): an order needs
+       Web, Orders, Inventory and Payments at the same time. For normal debugging use the compound
+       "MiniShop - Run ALL services" instead; use this one only to restart a single service while the
+       other three are already running. -->
+  <configuration default="false" name="Inventory only (5102)" type="LaunchSettings" factoryName=".NET Launch Settings Profile" folderName="Single service only (needs the other 3 running)">
     <option name="LAUNCH_PROFILE_PROJECT_FILE_PATH" value="$PROJECT_DIR$/src/MiniShop.Inventory/MiniShop.Inventory.csproj" />
     <option name="LAUNCH_PROFILE_TFM" value="net10.0" />
     <option name="LAUNCH_PROFILE_NAME" value="MiniShop.Inventory" />
