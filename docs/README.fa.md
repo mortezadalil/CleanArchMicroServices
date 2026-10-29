@@ -21,6 +21,26 @@ docker compose -f infra/compose.yaml up --build
 اگر می‌خواهید سرویس‌ها را با `dotnet run` اجرا کنید: `docker compose -f infra/compose.yaml up -d rabbitmq`
 و سپس `scripts/run-local.sh` (نیازمند .NET 10 SDK).
 
+### اجرا و دیباگ بدون داکر (JetBrains Rider)
+
+پیش‌نیاز: .NET 10 SDK و RabbitMQ نصب‌شده روی خود سیستم. سرویس‌ها فقط از طریق broker با هم حرف
+می‌زنند، پس RabbitMQ حتماً لازم است. روی مک:
+
+```bash
+brew install rabbitmq
+brew services start rabbitmq
+rabbitmq-plugins enable rabbitmq_management
+```
+
+فایل `MiniShop.slnx` را در Rider باز کنید. پیکربندی‌های اجرای مشترک پوشهٔ `.run/` در فهرست Run
+زیر پوشهٔ **MiniShop** دیده می‌شوند: یکی برای هر سرویس و یک پیکربندی ترکیبی به نام
+**MiniShop (all services)**. همین را انتخاب کنید و **Debug** بزنید تا هر چهار سرویس با دیباگر بالا
+بیایند. سپس http://localhost:5100 را باز کنید. سرویس‌های Orders، Inventory و Payments روی `/` صفحه‌ای
+ندارند و خطای ۴۰۴ آن‌جا طبیعی است؛ برای بررسی سلامت از `/health/ready` استفاده کنید.
+
+بدون داکر، سناریوی S09 فقط bus سرویس Orders را دوباره راه می‌اندازد و برای S04 خودتان RabbitMQ را با
+`brew services stop rabbitmq` متوقف و با `brew services start rabbitmq` دوباره روشن کنید.
+
 ## چهار پروژه
 
 | پروژه | مسئولیت | دیتابیس |

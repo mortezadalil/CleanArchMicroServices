@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <!-- Starts the four MiniShop services together, so one Run/Debug click debugs the whole system.
+       Prerequisite: RabbitMQ on localhost:5672 (management UI on 15672). Then open http://localhost:5100. -->
+  <configuration default="false" name="MiniShop (all services)" type="CompoundRunConfigurationType">
+    <toRun name="Orders (5101)" type="LaunchSettings" />
+    <toRun name="Inventory (5102)" type="LaunchSettings" />
+    <toRun name="Payments (5103)" type="LaunchSettings" />
+    <toRun name="Web (5100)" type="LaunchSettings" />
+    <method v="2" />
+  </configuration>
+</component>

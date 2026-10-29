@@ -39,11 +39,32 @@ Requirements: .NET 10 SDK, Docker.
 
 ```bash
 docker compose -f infra/compose.yaml up -d rabbitmq
-scripts/run-local.sh            # or start the four projects from your IDE (launch profiles included)
+scripts/run-local.sh            # or start the four projects from your IDE (Rider: see Option C)
 ```
 
 Ports: Web 5100, Orders 5101, Inventory 5102, Payments 5103. SQLite files are created under each
 project's `data/` folder.
+
+### Option C — no Docker at all, debug in JetBrains Rider
+
+Requirements: .NET 10 SDK and a RabbitMQ installed on your machine (there is no in-memory transport:
+the four processes talk only through the broker). On macOS:
+
+```bash
+brew install rabbitmq
+brew services start rabbitmq
+rabbitmq-plugins enable rabbitmq_management   # UI on :15672, also used by the Developer Console
+```
+
+Open `MiniShop.slnx` in Rider. The shared run configurations in `.run/` appear under the **MiniShop**
+folder of the run-configuration selector: one per service (`Web (5100)`, `Orders (5101)`,
+`Inventory (5102)`, `Payments (5103)`) and the compound **MiniShop (all services)**. Pick the compound
+and press **Debug**: all four start under the debugger, breakpoints work in every service. Then open
+http://localhost:5100 (Inventory, Orders and Payments have no page at `/`, a 404 there is normal; use
+`/health/ready`).
+
+Without Docker, S09 restarts only Orders' bus in-process (the default `OrdersRestartMode: Bus`) and for
+S04 you stop the broker yourself (`brew services stop rabbitmq`, then `start`) when the log asks.
 
 ### First five minutes
 

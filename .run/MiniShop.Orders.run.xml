@@ -1,0 +1,20 @@
+<component name="ProjectRunConfigurationManager">
+  <!-- Shared JetBrains Rider run configuration (committed on purpose, .idea/ is not).
+       Runs src/MiniShop.Orders with its launch profile: ASPNETCORE_ENVIRONMENT=Development, http://localhost:5101.
+       Needs RabbitMQ on localhost:5672 (Docker or a native install). See README "Option C". -->
+  <configuration default="false" name="Orders (5101)" type="LaunchSettings" factoryName=".NET Launch Settings Profile" folderName="MiniShop">
+    <option name="LAUNCH_PROFILE_PROJECT_FILE_PATH" value="$PROJECT_DIR$/src/MiniShop.Orders/MiniShop.Orders.csproj" />
+    <option name="LAUNCH_PROFILE_TFM" value="net10.0" />
+    <option name="LAUNCH_PROFILE_NAME" value="MiniShop.Orders" />
+    <option name="USE_EXTERNAL_CONSOLE" value="0" />
+    <option name="USE_MONO" value="0" />
+    <option name="RUNTIME_ARGUMENTS" value="" />
+    <option name="GENERATE_APPLICATIONHOST_CONFIG" value="1" />
+    <option name="SHOW_IIS_EXPRESS_OUTPUT" value="0" />
+    <option name="SEND_DEBUG_REQUEST" value="1" />
+    <option name="ADDITIONAL_IIS_EXPRESS_ARGUMENTS" value="" />
+    <method v="2">
+      <option name="Build" />
+    </method>
+  </configuration>
+</component>
